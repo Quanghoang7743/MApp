@@ -155,18 +155,18 @@ class _AuthFlowScreenState extends State<AuthFlowScreen> {
                               const SizedBox(height: 18),
                               Text(
                                 _mode == AuthMode.login
-                                    ? 'Welcome back'
-                                    : 'Create account',
+                                    ? 'Chào mừng trở lại'
+                                    : 'Tạo tài khoản',
                                 style: theme.textTheme.titleLarge,
                               ),
                               const SizedBox(height: 6),
-                              Text(
-                                _mode == AuthMode.login
-                                    ? 'Log in to continue your premium experience'
-                                    : 'Join with a calm and elegant identity',
-                                textAlign: TextAlign.center,
-                                style: theme.textTheme.bodyMedium,
-                              ),
+                              // Text(
+                              //   _mode == AuthMode.login
+                              //       ? 'Log in to continue your premium experience'
+                              //       : 'Join with a calm and elegant identity',
+                              //   textAlign: TextAlign.center,
+                              //   style: theme.textTheme.bodyMedium,
+                              // ),
                               Expanded(
                                 child: AuthPanel(
                                   child: AnimatedSwitcher(
