@@ -122,30 +122,30 @@ class _AuthFlowScreenState extends State<AuthFlowScreen> {
                       constraints: const BoxConstraints(maxWidth: 420),
                       child: DecoratedBox(
                         decoration: BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: isDark
-                                ? [
-                                    const Color(0xFF14171D),
-                                    const Color(0xFF1A1E26),
-                                  ]
-                                : [
-                                    const Color(0xFFFCFDFF),
-                                    const Color(0xFFF3F6FB),
-                                  ],
-                          ),
-                          borderRadius: BorderRadius.circular(32),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(
-                                alpha: isDark ? 0.28 : 0.08,
-                              ),
-                              blurRadius: 36,
-                              spreadRadius: -16,
-                              offset: const Offset(0, 20),
-                            ),
-                          ],
+                          // gradient: LinearGradient(
+                          //   begin: Alignment.topCenter,
+                          //   end: Alignment.bottomCenter,
+                          //   colors: isDark
+                          //       ? [
+                          //           const Color(0xFF14171D),
+                          //           const Color(0xFF1A1E26),
+                          //         ]
+                          //       : [
+                          //           const Color(0xFFFCFDFF),
+                          //           const Color(0xFFF3F6FB),
+                          //         ],
+                          // ),
+                          // // borderRadius: BorderRadius.circular(32),
+                          // boxShadow: [
+                          //   BoxShadow(
+                          //     color: Colors.black.withValues(
+                          //       alpha: isDark ? 0.28 : 0.08,
+                          //     ),
+                          //     blurRadius: 36,
+                          //     spreadRadius: -16,
+                          //     offset: const Offset(0, 20),
+                          //   ),
+                          // ],
                         ),
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
@@ -153,6 +153,7 @@ class _AuthFlowScreenState extends State<AuthFlowScreen> {
                             children: [
                               const AuthLogo(),
                               const SizedBox(height: 18),
+                              
                               Text(
                                 _mode == AuthMode.login
                                     ? 'Chào mừng trở lại'
