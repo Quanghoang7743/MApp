@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 
 import '../models/chat_item.dart';
 import '../models/message_item.dart';
-import '../widgets/input_bar.dart';
-import '../widgets/message_bubble.dart';
-import '../widgets/typing_indicator.dart';
+import 'widgets/input_bar.dart';
+import 'widgets/message_bubble.dart';
+import 'widgets/typing_indicator.dart';
 
 class ConversationScreen extends StatelessWidget {
   const ConversationScreen({

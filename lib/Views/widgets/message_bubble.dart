@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../models/message_item.dart';
+import '../../models/message_item.dart';
 
 class MessageBubble extends StatelessWidget {
   const MessageBubble({super.key, required this.message});

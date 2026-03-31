@@ -1,6 +1,6 @@
-import 'package:doctor_app/Views/app_home_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:mess_app/Views/chat_list_screen.dart';
 
 class AppMainScreen extends StatefulWidget {
   const AppMainScreen({super.key});
@@ -10,12 +10,12 @@ class AppMainScreen extends StatefulWidget {
 }
 
 class _AppMainScreenState extends State<AppMainScreen> {
-    int selectIndex = 0;
-    final List page = [
-      const AppHomeScreen(),
-      const Scaffold(),
-      const Scaffold()
-    ];
+  int selectIndex = 0;
+  final List page = [
+    // const ChatListScreen(),
+    const Scaffold(),
+    const Scaffold(),
+  ];
   @override
   Widget build(BuildContext context) {
     return Scaffold(

@@ -13,8 +13,13 @@ void main() {
   testWidgets('renders premium auth login screen', (WidgetTester tester) async {
     await tester.pumpWidget(const PremiumAuthApp());
 
-    expect(find.text('Welcome back'), findsOneWidget);
-    expect(find.text('Phone Number'), findsOneWidget);
+    expect(find.text('Chào mừng trở lại'), findsOneWidget);
+    expect(find.text('Số điện thoại'), findsOneWidget);
     expect(find.text('Login'), findsOneWidget);
+
+    await tester.tap(find.text('Login'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Messages'), findsOneWidget);
   });
 }

@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../models/chat_item.dart';
+import '../../models/chat_item.dart';
 
 class ConversationRow extends StatelessWidget {
   const ConversationRow({super.key, required this.chat, required this.onTap});
