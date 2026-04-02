@@ -1,17 +1,32 @@
-# my_app
+# Nhóm 7: Xây dựng ứng dụng gửi nhận tin nhắn thời gian thực
 
-A new Flutter project.
+# Thành viên nhóm
 
-## Getting Started
+- Hoàng Minh Quang
+- Nguyễn Quý Khôi
+- Nghiêm Xuân Mạnh
+- Nguyễn Thị Huyền
 
-This project is a starting point for a Flutter application.
+# Cách chạy
+- Chạy lệnh sau để tải thư viện
+```bash
+flutter pub get
+```
 
-A few resources to get you started if this is your first Flutter project:
+- Sau đó tạo file .env 
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+```bash
+API_URL= "http://mox.message.com"
+```
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+- Cuối cùng chạy lệnh sau để chạy ứng dụng
+```bash
+flutter run 
+```
+
+# Tech Stack
+
+- Flutter
+- Laravel
+- MySQL
+- Websocket
