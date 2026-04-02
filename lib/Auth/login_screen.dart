@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-// import '../Views/chat_list_screen.dart';
+import 'package:provider/provider.dart';
+
+import '../providers/auth_provider.dart';
+import '../main-navigation.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -10,6 +13,60 @@ class LoginScreen extends StatefulWidget {
 }
 
 class _LoginScreenState extends State<LoginScreen> {
+  final TextEditingController phoneController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+  bool stayLoggedIn = false;
+  bool isLoading = false;
+
+  Future<void> _login() async {
+    if (phoneController.text.isEmpty || passwordController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Vui lòng nhập đầy đủ số điện thoại và mật khẩu'),
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      isLoading = true;
+    });
+
+    final authProvider = Provider.of<AuthProvider>(context, listen: false);
+    final errorMsg = await authProvider.login(
+      phoneController.text,
+      passwordController.text,
+      stayLoggedIn,
+    );
+
+    if (mounted) {
+      setState(() {
+        isLoading = false;
+      });
+
+      if (errorMsg == null) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const AppMainScreen()),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(errorMsg),
+            duration: const Duration(seconds: 4),
+          ),
+        );
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    phoneController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -44,6 +101,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     Column(
                       children: [
                         TextField(
+                          controller: phoneController,
                           keyboardType: TextInputType.number,
                           inputFormatters: [
                             FilteringTextInputFormatter.digitsOnly,
@@ -51,11 +109,11 @@ class _LoginScreenState extends State<LoginScreen> {
                           ],
                           decoration: InputDecoration(
                             hintText: 'Số điện thoại',
-                            hintStyle: TextStyle(color: Colors.black45),
+                            hintStyle: const TextStyle(color: Colors.black45),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(20),
                             ),
-                            contentPadding: EdgeInsets.symmetric(
+                            contentPadding: const EdgeInsets.symmetric(
                               horizontal: 20,
                               vertical: 0,
                             ),
@@ -64,14 +122,16 @@ class _LoginScreenState extends State<LoginScreen> {
                         SizedBox(height: 20),
                         // Check sdt xem có trong database kh, nếu có thì hiện TextField mật khẩu, nếu không thì hiện button Đăng ký
                         TextField(
+                          controller: passwordController,
+                          obscureText: true,
                           keyboardType: TextInputType.text,
                           decoration: InputDecoration(
                             hintText: 'Mật khẩu',
-                            hintStyle: TextStyle(color: Colors.black45),
+                            hintStyle: const TextStyle(color: Colors.black45),
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(20),
                             ),
-                            contentPadding: EdgeInsets.symmetric(
+                            contentPadding: const EdgeInsets.symmetric(
                               horizontal: 20,
                               vertical: 0,
                             ),
@@ -80,8 +140,15 @@ class _LoginScreenState extends State<LoginScreen> {
                         SizedBox(height: 20),
                         Row(
                           children: [
-                            Checkbox(value: false, onChanged: (value) {}),
-                            Text("Giữ luôn đăng nhập"),
+                            Checkbox(
+                              value: stayLoggedIn,
+                              onChanged: (value) {
+                                setState(() {
+                                  stayLoggedIn = value ?? false;
+                                });
+                              },
+                            ),
+                            const Text("Giữ luôn đăng nhập"),
                           ],
                         ),
                       ],
@@ -100,26 +167,28 @@ class _LoginScreenState extends State<LoginScreen> {
                     borderRadius: BorderRadius.circular(30),
                   ),
                   child: ElevatedButton(
-                    onPressed: () {
-                      // Navigator.push(
-                      //   context,
-                      //   MaterialPageRoute(
-                      //     builder: (context) => const LoginScreen(),
-                      //   ),
-                      // );
-                    },
+                    onPressed: isLoading ? null : _login,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.transparent,
                       shadowColor: Colors.transparent,
                       padding: const EdgeInsets.symmetric(vertical: 16),
                     ),
-                    child: const Text(
-                      "Đăng nhập",
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
+                    child: isLoading
+                        ? const SizedBox(
+                            width: 24,
+                            height: 24,
+                            child: CircularProgressIndicator(
+                              color: Colors.white,
+                              strokeWidth: 2,
+                            ),
+                          )
+                        : const Text(
+                            "Đăng nhập",
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
                   ),
                 ),
               ),

@@ -11,7 +11,7 @@ import 'package:mess_app/main.dart';
 
 void main() {
   testWidgets('renders premium auth login screen', (WidgetTester tester) async {
-    await tester.pumpWidget(const PremiumAuthApp());
+    await tester.pumpWidget(const MyApp());
 
     expect(find.text('Chào mừng trở lại'), findsOneWidget);
     expect(find.text('Số điện thoại'), findsOneWidget);
