@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:mess_app/Views/app_home_login_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
-import 'Views/home_login_screen.dart';
 import 'providers/auth_provider.dart';
 
 Future<void> main() async {
@@ -9,9 +9,7 @@ Future<void> main() async {
   await dotenv.load(fileName: ".env");
   runApp(
     MultiProvider(
-      providers: [
-        ChangeNotifierProvider(create: (_) => AuthProvider()),
-      ],
+      providers: [ChangeNotifierProvider(create: (_) => AuthProvider())],
       child: const MyApp(),
     ),
   );

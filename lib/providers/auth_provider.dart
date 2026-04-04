@@ -3,11 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/environment.dart';
+import '../services/api_services.dart';
 
 class AuthProvider with ChangeNotifier {
   String? _token;
   Map<String, dynamic>? _user;
   bool _isLoading = true;
+
+  late final ApiServices api;
 
   String? get token => _token;
   Map<String, dynamic>? get user => _user;
@@ -15,7 +18,16 @@ class AuthProvider with ChangeNotifier {
   bool get isLoading => _isLoading;
 
   AuthProvider() {
+    api = ApiServices(tokenProvider: _resolveToken);
     _loadFromPrefs();
+  }
+
+  Future<String?> _resolveToken() async {
+    if (_token != null && _token!.isNotEmpty) {
+      return _token;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString('auth_token');
   }
 
   Future<void> _loadFromPrefs() async {
@@ -58,12 +70,6 @@ class AuthProvider with ChangeNotifier {
         _user =
             body['user'] ??
             (body['data'] != null ? body['data']['user'] : null);
-
-        if (_token == null) {
-          print(
-            'Warning: Không tìm thấy trường token hoặc access_token trong phản hồi đăng nhập!',
-          );
-        }
 
         if (stayLoggedIn && _token != null) {
           final prefs = await SharedPreferences.getInstance();

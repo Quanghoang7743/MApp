@@ -16,7 +16,7 @@ flutter pub get
 - Sau đó tạo file .env 
 
 ```bash
-API_URL= "http://mox.message.com"
+API_URL=https://moxchat-production.up.railway.app
 ```
 
 - Cuối cùng chạy lệnh sau để chạy ứng dụng

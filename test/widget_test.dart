@@ -10,16 +10,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:mess_app/main.dart';
 
 void main() {
-  testWidgets('renders premium auth login screen', (WidgetTester tester) async {
+  testWidgets('renders home login screen', (WidgetTester tester) async {
     await tester.pumpWidget(const MyApp());
 
-    expect(find.text('Chào mừng trở lại'), findsOneWidget);
-    expect(find.text('Số điện thoại'), findsOneWidget);
-    expect(find.text('Login'), findsOneWidget);
-
-    await tester.tap(find.text('Login'));
-    await tester.pumpAndSettle();
-
-    expect(find.text('Messages'), findsOneWidget);
+    expect(find.text('Mox'), findsOneWidget);
+    expect(find.text('Đăng nhập'), findsOneWidget);
   });
 }

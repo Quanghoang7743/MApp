@@ -1,7 +1,7 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
-import 'package:mess_app/Views/chat_list_screen.dart';
+import 'package:mess_app/Views/app_chat_list_screen.dart';
 
 class AppMainScreen extends StatefulWidget {
   const AppMainScreen({super.key});
@@ -14,11 +14,7 @@ class _AppMainScreenState extends State<AppMainScreen> {
   int selectIndex = 0;
   final List page = [
     const Scaffold(),
-    ChatListScreen(
-      onChatTap: () {},
-      onToggleTheme: () {},
-      darkModeEnabled: false,
-    ),
+    ChatListScreen(onToggleTheme: () {}, darkModeEnabled: false),
     const Scaffold(),
   ];
   @override
