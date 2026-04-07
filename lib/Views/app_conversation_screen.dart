@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat_item.dart';
@@ -26,15 +27,91 @@ class ConversationScreen extends StatefulWidget {
 
 class _ConversationScreenState extends State<ConversationScreen> {
   late List<MessageItem> _messages;
+  late String _contactName;
   final ScrollController _scrollController = ScrollController();
   bool _sending = false;
 
   @override
   void initState() {
     super.initState();
+    _contactName = widget.contact.name;
     _messages = _sortMessagesByTime(List<MessageItem>.from(widget.messages));
     Future.microtask(_reloadMessagesFromServer);
+    Future.microtask(_resolveContactNameIfUnknown);
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  Future<void> _resolveContactNameIfUnknown() async {
+    final current = _contactName.trim().toLowerCase();
+    if (current.isNotEmpty && current != 'unknown') {
+      return;
+    }
+
+    if (widget.contact.id.isEmpty) {
+      return;
+    }
+
+    try {
+      final authProvider = context.read<AuthProvider>();
+      final currentUserId = _resolveCurrentUserId(authProvider.user);
+      final response = await authProvider.api.participants.getParticipants(
+        widget.contact.id,
+      );
+      final participants = _extractList(
+        response,
+      ).whereType<Map<String, dynamic>>().toList();
+
+      String? resolvedName;
+      for (final participant in participants) {
+        final user = participant['user'] is Map<String, dynamic>
+            ? participant['user'] as Map<String, dynamic>
+            : participant;
+        final userId = (user['id'] ?? user['user_id'] ?? '').toString();
+        if (userId.isNotEmpty && userId == currentUserId) {
+          continue;
+        }
+
+        final candidate =
+            (user['name'] ??
+                    user['full_name'] ??
+                    user['fullName'] ??
+                    user['username'] ??
+                    user['phone_number'])
+                ?.toString();
+        if (candidate != null && candidate.trim().isNotEmpty) {
+          resolvedName = candidate;
+          break;
+        }
+      }
+
+      if (resolvedName != null && mounted) {
+        setState(() {
+          _contactName = resolvedName!;
+        });
+      }
+    } catch (_) {
+      // keep fallback name
+    }
+  }
+
+  String _displayInitials() {
+    final name = _contactName.trim();
+    if (name.isEmpty || name.toLowerCase() == 'unknown') {
+      return widget.contact.initials;
+    }
+
+    final parts = name
+        .split(RegExp(r'\s+'))
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) {
+      return widget.contact.initials;
+    }
+    if (parts.length == 1) {
+      return parts.first.substring(0, 1).toUpperCase();
+    }
+    return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
+        .toUpperCase();
   }
 
   @override
@@ -385,6 +462,23 @@ class _ConversationScreenState extends State<ConversationScreen> {
     return '';
   }
 
+  String _formatTime(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed != null) {
+      final local = parsed.toLocal();
+      final hh = local.hour.toString().padLeft(2, '0');
+      final mm = local.minute.toString().padLeft(2, '0');
+      return '$hh:$mm';
+    }
+
+    final match = RegExp(r'(\d{2}):(\d{2})').firstMatch(raw);
+    if (match != null) {
+      return '${match.group(1)}:${match.group(2)}';
+    }
+
+    return raw;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -416,40 +510,42 @@ class _ConversationScreenState extends State<ConversationScreen> {
                         size: 18,
                       ),
                     ),
-                    Expanded(
-                      child: Column(
-                        children: [
-                          CircleAvatar(
-                            radius: 14,
-                            backgroundColor: isDark
-                                ? const Color(0xFF2B313A)
-                                : const Color(0xFFE7EBF2),
-                            child: Text(
-                              widget.contact.initials,
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            widget.contact.name,
-                            style: theme.textTheme.titleMedium,
-                          ),
-                        ],
+                    CircleAvatar(
+                      radius: 14,
+                      backgroundColor: isDark
+                          ? const Color(0xFF2B313A)
+                          : const Color(0xFFE7EBF2),
+                      child: Text(
+                        _displayInitials(),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                     ),
-                    // SizedBox(
-                    //   width: 48,
-                    //   child: _sending
-                    //       ? const SizedBox(
-                    //           width: 16,
-                    //           height: 16,
-                    //           child: CircularProgressIndicator(strokeWidth: 2),
-                    //         )
-                    //       : const SizedBox.shrink(),
-                    // ),
+                    const SizedBox(height: 4),
+                    Text(_contactName, style: theme.textTheme.titleMedium),
+                    const Spacer(),
+                    Row(
+                      children: [
+                        IconButton(
+                          onPressed: () {},
+                          icon: SvgPicture.asset(
+                            'assets/icons/call.svg',
+                            width: 20,
+                            height: 20,
+                          ),
+                        ),
+                        IconButton(
+                          onPressed: () {},
+                          icon: SvgPicture.asset(
+                            'assets/icons/video-call.svg',
+                            width: 25,
+                            height: 25,
+                          ),
+                        ),
+                      ],
+                    ),
                   ],
                 ),
               ),
@@ -463,10 +559,16 @@ class _ConversationScreenState extends State<ConversationScreen> {
                     const SizedBox(height: 10),
                 itemBuilder: (context, index) {
                   final message = _messages[index];
+                  final displayMessage = MessageItem(
+                    id: message.id,
+                    text: message.text,
+                    isMe: message.isMe,
+                    time: _formatTime(message.time),
+                  );
                   final isSendingMessage =
                       _sending && message.id.startsWith('temp-');
                   return MessageBubble(
-                    message: message,
+                    message: displayMessage,
                     isSending: isSendingMessage,
                   );
                 },

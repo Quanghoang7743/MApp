@@ -1,7 +1,10 @@
 import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
+import 'package:mess_app/Views/app_contact_screen.dart';
 import 'package:mess_app/Views/app_chat_list_screen.dart';
+import 'package:mess_app/Views/app_search_screen.dart';
+import 'package:mess_app/Views/app_setting_screen.dart';
 
 class AppMainScreen extends StatefulWidget {
   const AppMainScreen({super.key});
@@ -12,11 +15,20 @@ class AppMainScreen extends StatefulWidget {
 
 class _AppMainScreenState extends State<AppMainScreen> {
   int selectIndex = 0;
-  final List page = [
-    const Scaffold(),
-    ChatListScreen(onToggleTheme: () {}, darkModeEnabled: false),
-    const Scaffold(),
-  ];
+
+  Widget _buildCurrentPage() {
+    switch (selectIndex) {
+      case 0:
+        return const ContactScreen();
+      case 1:
+        return ChatListScreen(onToggleTheme: () {}, darkModeEnabled: false);
+      case 2:
+        return const SettingScreen();
+      default:
+        return ChatListScreen(onToggleTheme: () {}, darkModeEnabled: false);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -159,7 +171,11 @@ class _AppMainScreenState extends State<AppMainScreen> {
                         ),
                       ),
                       onPressed: () {
-                        // Implement Search UI here when needed
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => const SearchScreen(),
+                          ),
+                        );
                       },
                     ),
                   ),
@@ -169,7 +185,7 @@ class _AppMainScreenState extends State<AppMainScreen> {
           ),
         ),
       ),
-      body: page[selectIndex],
+      body: _buildCurrentPage(),
     );
   }
 }

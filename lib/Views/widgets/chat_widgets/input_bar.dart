@@ -70,7 +70,7 @@ class _InputBarState extends State<InputBar> {
     return SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 4, 12, 8),
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 0),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(24),
           child: BackdropFilter(
@@ -93,7 +93,7 @@ class _InputBarState extends State<InputBar> {
                   RoundIcon(
                     icon: Icons.add_rounded,
                     color: widget.isDark
-                        ? const Color(0xFFDEE2EA)
+                        ? const Color(0xFFffffff)
                         : const Color(0xFF465066),
                   ),
                   const SizedBox(width: 8),
@@ -102,12 +102,6 @@ class _InputBarState extends State<InputBar> {
                       height: 42,
                       alignment: Alignment.centerLeft,
                       padding: const EdgeInsets.symmetric(horizontal: 14),
-                      decoration: BoxDecoration(
-                        color: widget.isDark
-                            ? const Color(0xFF262B35).withValues(alpha: 0.8)
-                            : const Color(0xFFF2F4F7),
-                        borderRadius: BorderRadius.circular(21),
-                      ),
                       child: TextField(
                         controller: _controller,
                         onChanged: _onTextChanged,

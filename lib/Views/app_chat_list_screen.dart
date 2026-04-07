@@ -24,6 +24,7 @@ class ChatListScreen extends StatefulWidget {
 
 class _ChatListScreenState extends State<ChatListScreen> {
   List<ChatItem> chats = [];
+  Map<String, String> _friendNameByUserId = {};
   bool isLoading = true;
   String? errorMessage;
 
@@ -37,13 +38,22 @@ class _ChatListScreenState extends State<ChatListScreen> {
     try {
       final authProvider = context.read<AuthProvider>();
       final currentUserId = _resolveCurrentUserId(authProvider.user);
+
+      try {
+        final friendsResponse = await authProvider.api.friends.getFriends();
+        final friendsList = _extractList(friendsResponse);
+        _friendNameByUserId = _buildFriendNameMap(friendsList);
+      } catch (_) {
+        _friendNameByUserId = {};
+      }
+
       final response = await authProvider.api.conversations.getConversations();
 
       final data = _extractList(response);
-      final mapped = data
-          .whereType<Map<String, dynamic>>()
-          .map((item) => ChatItem.fromJson(item, currentUserId: currentUserId))
-          .toList();
+      final mapped = data.whereType<Map<String, dynamic>>().map((item) {
+        final chat = ChatItem.fromJson(item, currentUserId: currentUserId);
+        return _resolveUnknownChatName(chat, item, currentUserId);
+      }).toList();
 
       if (!mounted) {
         return;
@@ -61,6 +71,136 @@ class _ChatListScreenState extends State<ChatListScreen> {
         isLoading = false;
       });
     }
+  }
+
+  Map<String, String> _buildFriendNameMap(List<dynamic> friends) {
+    final result = <String, String>{};
+
+    for (final item in friends) {
+      if (item is! Map<String, dynamic>) {
+        continue;
+      }
+
+      final user = item['user'];
+      final userMap = user is Map<String, dynamic> ? user : item;
+      final id = (userMap['id'] ?? userMap['user_id'] ?? item['friend_id'])
+          ?.toString();
+      final name =
+          (userMap['name'] ??
+                  userMap['full_name'] ??
+                  userMap['fullName'] ??
+                  userMap['username'])
+              ?.toString();
+
+      if (id != null &&
+          id.isNotEmpty &&
+          name != null &&
+          name.trim().isNotEmpty) {
+        result[id] = name;
+      }
+    }
+
+    return result;
+  }
+
+  ChatItem _resolveUnknownChatName(
+    ChatItem chat,
+    Map<String, dynamic> raw,
+    String currentUserId,
+  ) {
+    final trimmedName = chat.name.trim().toLowerCase();
+    if (trimmedName.isNotEmpty && trimmedName != 'unknown') {
+      return chat;
+    }
+
+    final source = raw['conversation'] is Map<String, dynamic>
+        ? raw['conversation'] as Map<String, dynamic>
+        : raw;
+    final userIds = _extractRelatedUserIds(source);
+
+    for (final id in userIds) {
+      if (id.isEmpty || id == currentUserId) {
+        continue;
+      }
+
+      final mappedName = _friendNameByUserId[id];
+      if (mappedName != null && mappedName.trim().isNotEmpty) {
+        return ChatItem(
+          id: chat.id,
+          name: mappedName,
+          message: chat.message,
+          time: chat.time,
+          initials: _initialsFromName(mappedName),
+          isTyping: chat.isTyping,
+        );
+      }
+    }
+
+    return chat;
+  }
+
+  List<String> _extractRelatedUserIds(Map<String, dynamic> conversation) {
+    final ids = <String>{};
+
+    for (final key in const [
+      'user_id',
+      'target_user_id',
+      'other_user_id',
+      'friend_id',
+      'recipient_id',
+    ]) {
+      final value = conversation[key];
+      if (value != null && value.toString().isNotEmpty) {
+        ids.add(value.toString());
+      }
+    }
+
+    final participantIds = conversation['participant_ids'];
+    if (participantIds is List) {
+      for (final item in participantIds) {
+        if (item != null && item.toString().isNotEmpty) {
+          ids.add(item.toString());
+        }
+      }
+    }
+
+    final participants = conversation['participants'];
+    if (participants is List) {
+      for (final item in participants) {
+        if (item is Map<String, dynamic>) {
+          final directId = item['id'] ?? item['user_id'];
+          if (directId != null && directId.toString().isNotEmpty) {
+            ids.add(directId.toString());
+          }
+
+          final user = item['user'];
+          if (user is Map<String, dynamic>) {
+            final nestedId = user['id'] ?? user['user_id'];
+            if (nestedId != null && nestedId.toString().isNotEmpty) {
+              ids.add(nestedId.toString());
+            }
+          }
+        }
+      }
+    }
+
+    return ids.toList();
+  }
+
+  String _initialsFromName(String name) {
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((p) => p.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) {
+      return '?';
+    }
+    if (parts.length == 1) {
+      return parts.first.substring(0, 1).toUpperCase();
+    }
+    return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
+        .toUpperCase();
   }
 
   Future<void> _openConversation(ChatItem chat) async {
@@ -148,6 +288,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
     return '';
   }
 
+  String _formatTime(String raw) {
+    final parsed = DateTime.tryParse(raw);
+    if (parsed != null) {
+      final local = parsed.toLocal();
+      final hh = local.hour.toString().padLeft(2, '0');
+      final mm = local.minute.toString().padLeft(2, '0');
+      return '$hh:$mm';
+    }
+
+    final match = RegExp(r'(\d{2}):(\d{2})').firstMatch(raw);
+    if (match != null) {
+      return '${match.group(1)}:${match.group(2)}';
+    }
+
+    return raw;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -232,8 +389,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
                               const SizedBox(height: 12),
                           itemBuilder: (context, index) {
                             final chat = chats[index];
+                            final displayChat = ChatItem(
+                              id: chat.id,
+                              name: chat.name,
+                              message: chat.message,
+                              time: _formatTime(chat.time),
+                              initials: chat.initials,
+                              isTyping: chat.isTyping,
+                            );
                             return ConversationRow(
-                              chat: chat,
+                              chat: displayChat,
                               onTap: () => _openConversation(chat),
                             );
                           },
