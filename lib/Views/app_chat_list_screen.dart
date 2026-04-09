@@ -81,15 +81,26 @@ class _ChatListScreenState extends State<ChatListScreen> {
         continue;
       }
 
-      final user = item['user'];
-      final userMap = user is Map<String, dynamic> ? user : item;
-      final id = (userMap['id'] ?? userMap['user_id'] ?? item['friend_id'])
-          ?.toString();
+      final normalized = _normalizeFriendItem(item);
+      if (normalized == null) {
+        continue;
+      }
+
+      final user = normalized['user'];
+      final userMap = user is Map<String, dynamic> ? user : normalized;
+      final id =
+          (userMap['id'] ??
+                  userMap['user_id'] ??
+                  normalized['friend_id'] ??
+                  normalized['contact_id'])
+              ?.toString();
       final name =
           (userMap['name'] ??
                   userMap['full_name'] ??
                   userMap['fullName'] ??
-                  userMap['username'])
+                  userMap['display_name'] ??
+                  userMap['username'] ??
+                  normalized['name'])
               ?.toString();
 
       if (id != null &&
@@ -101,6 +112,29 @@ class _ChatListScreenState extends State<ChatListScreen> {
     }
 
     return result;
+  }
+
+  Map<String, dynamic>? _normalizeFriendItem(Map<String, dynamic> raw) {
+    final nestedFriend = raw['friend'];
+    if (nestedFriend is Map<String, dynamic>) {
+      final user = nestedFriend['user'];
+      if (user is Map<String, dynamic>) {
+        return {...nestedFriend, 'user': user};
+      }
+      return nestedFriend;
+    }
+
+    final nestedContact = raw['contact'];
+    if (nestedContact is Map<String, dynamic>) {
+      return nestedContact;
+    }
+
+    final nestedUser = raw['user'];
+    if (nestedUser is Map<String, dynamic>) {
+      return {...raw, 'user': nestedUser};
+    }
+
+    return raw;
   }
 
   ChatItem _resolveUnknownChatName(
