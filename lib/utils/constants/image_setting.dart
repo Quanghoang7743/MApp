@@ -9,4 +9,10 @@ class ImageSetting {
   static const String callRecend = 'assets/icons/call-recend.svg';
   static const String call = 'assets/icons/call.svg';
   static const String videoCall = 'assets/icons/video-call.svg';
+  static const String userCircle = 'assets/icons/user-circle.svg';
+  static const String bell = 'assets/icons/bell.svg';
+  static const String folder = 'assets/icons/folder.svg';
+  static const String earth = 'assets/icons/earth.svg';
+  static const String message = 'assets/icons/message.svg';
+  static const String logout = 'assets/icons/logout.svg';
 }
