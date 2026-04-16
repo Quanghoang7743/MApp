@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../Auth/login_screen.dart';
+import '../Auth/sign_up_screen.dart';
 
 class HomeLoginScreen extends StatefulWidget {
   const HomeLoginScreen({super.key});
@@ -72,7 +73,14 @@ class _HomeLoginScreen extends State<HomeLoginScreen> {
                         const SizedBox(height: 8),
                         // Nút Đăng ký dạng TextButton để giảm sự chú ý
                         TextButton(
-                          onPressed: () {},
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const SignUpScreen(),
+                              ),
+                            );
+                          },
                           child: RichText(
                             text: const TextSpan(
                               text: "Chưa có tài khoản? ",
