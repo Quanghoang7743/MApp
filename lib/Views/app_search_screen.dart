@@ -10,6 +10,8 @@ class SearchScreen extends StatefulWidget {
 class _SearchScreen extends State<SearchScreen> {
   @override
   Widget build(BuildContext context) {
-    return Scaffold();
+    return Scaffold(
+      body: SafeArea(child: Column(children: [Text('data')])),
+    );
   }
 }

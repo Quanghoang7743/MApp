@@ -180,10 +180,23 @@ class _ContactScreenState extends State<ContactScreen> {
       );
 
       final conversationMap = _extractConversationMap(response);
-      final chat = ChatItem.fromJson(
+      var chat = ChatItem.fromJson(
         conversationMap,
         currentUserId: currentUserId,
       );
+
+      final friendName = _nameFromFriend(friend);
+      if (chat.name.trim().isEmpty ||
+          chat.name.trim().toLowerCase() == 'unknown') {
+        chat = ChatItem(
+          id: chat.id,
+          name: friendName,
+          message: chat.message,
+          time: chat.time,
+          initials: _initialsFromName(friendName),
+          isTyping: chat.isTyping,
+        );
+      }
 
       if (chat.id.isEmpty) {
         throw ApiException(
@@ -324,6 +337,22 @@ class _ContactScreenState extends State<ContactScreen> {
       return n;
     }
     return 'Unknown';
+  }
+
+  String _initialsFromName(String name) {
+    final parts = name
+        .trim()
+        .split(RegExp(r'\s+'))
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) {
+      return '?';
+    }
+    if (parts.length == 1) {
+      return parts.first.substring(0, 1).toUpperCase();
+    }
+    return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
+        .toUpperCase();
   }
 
   String _subtitleFromFriend(Map<String, dynamic> friend) {
