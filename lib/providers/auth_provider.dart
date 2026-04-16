@@ -94,6 +94,42 @@ class AuthProvider with ChangeNotifier {
     }
   }
 
+  /// Returns null if register is successful, or an error message if failed.
+  Future<String?> register(
+    String phone,
+    String gender,
+    String password,
+  ) async {
+    try {
+      final response = await http.post(
+        Uri.parse('${Environment.baseUrl}/register'),
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+        },
+        body: jsonEncode({
+          'phone_number': phone,
+          'gender': gender,
+          'password': password,
+        }),
+      );
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return null; // Thành công
+      } else {
+        try {
+          final body = jsonDecode(response.body);
+          return body['message'] ??
+              'Đăng ký thất bại (Mã: ${response.statusCode})';
+        } catch (_) {
+          return 'Đăng ký thất bại (Mã: ${response.statusCode})';
+        }
+      }
+    } catch (e) {
+      return 'Lỗi kết nối: $e';
+    }
+  }
+
   Future<void> logout() async {
     _token = null;
     _user = null;
