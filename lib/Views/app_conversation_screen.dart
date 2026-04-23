@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
@@ -6,6 +8,8 @@ import '../models/chat_item.dart';
 import '../models/message_item.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_client.dart';
+import '../services/environment.dart';
+import '../services/realtime/realtime_service.dart';
 import 'widgets/chat_widgets/input_bar.dart';
 import 'widgets/chat_widgets/message_bubble.dart';
 
@@ -29,7 +33,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
   late List<MessageItem> _messages;
   late String _contactName;
   final ScrollController _scrollController = ScrollController();
+  final RealtimeService _realtime = RealtimeService.instance;
   bool _sending = false;
+  bool _peerTyping = false;
+  Timer? _typingHideTimer;
 
   @override
   void initState() {
@@ -38,7 +45,169 @@ class _ConversationScreenState extends State<ConversationScreen> {
     _messages = _sortMessagesByTime(List<MessageItem>.from(widget.messages));
     Future.microtask(_reloadMessagesFromServer);
     Future.microtask(_resolveContactNameIfUnknown);
+    Future.microtask(_setupRealtime);
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  Future<void> _setupRealtime() async {
+    if (widget.contact.id.isEmpty) {
+      return;
+    }
+
+    final authProvider = context.read<AuthProvider>();
+    await _realtime.ensureConnected(
+      apiKey: Environment.realtimeKey,
+      cluster: Environment.realtimeCluster.isEmpty
+          ? 'mt1'
+          : Environment.realtimeCluster,
+      useTLS: Environment.realtimeUseTLS,
+      authEndpoint: Environment.broadcastingAuthEndpoint,
+      tokenProvider: () async => authProvider.token,
+    );
+
+    if (Environment.realtimeKey.trim().isEmpty) {
+      return;
+    }
+
+    await _realtime.subscribeConversation(widget.contact.id);
+    _realtime.bindConversationEvent(
+      widget.contact.id,
+      '.message.created',
+      _onRealtimeMessageCreated,
+    );
+    _realtime.bindConversationEvent(
+      widget.contact.id,
+      '.message.deleted_for_everyone',
+      _onRealtimeMessageDeletedForEveryone,
+    );
+    _realtime.bindConversationEvent(
+      widget.contact.id,
+      '.conversation.typing.updated',
+      _onRealtimeTypingUpdated,
+    );
+  }
+
+  void _onRealtimeMessageCreated(RealtimeEvent event) {
+    final payload = event.data;
+    final conversationId = (payload['conversation_id'] ?? '').toString();
+    if (conversationId != widget.contact.id) {
+      return;
+    }
+
+    final messageRaw = payload['message'];
+    if (messageRaw is! Map<String, dynamic>) {
+      return;
+    }
+
+    final authProvider = context.read<AuthProvider>();
+    final currentUserId = _resolveCurrentUserId(authProvider.user);
+    final normalized = <String, dynamic>{
+      ...messageRaw,
+      'created_at':
+          messageRaw['sent_at'] ??
+          messageRaw['created_at'] ??
+          messageRaw['time'],
+    };
+    final message = MessageItem.fromJson(
+      normalized,
+      currentUserId: currentUserId,
+    );
+    if (message.id.isEmpty) {
+      return;
+    }
+
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      if (message.isMe) {
+        _messages.removeWhere(
+          (item) =>
+              item.id.startsWith('temp-') &&
+              item.text.trim() == message.text.trim(),
+        );
+      }
+
+      final existingIndex = _messages.indexWhere(
+        (item) => item.id == message.id,
+      );
+      if (existingIndex >= 0) {
+        _messages[existingIndex] = message;
+      } else {
+        _messages.add(message);
+      }
+      _messages = _sortMessagesByTime(_messages);
+    });
+    _scrollToBottom();
+  }
+
+  void _onRealtimeMessageDeletedForEveryone(RealtimeEvent event) {
+    final payload = event.data;
+    final conversationId = (payload['conversation_id'] ?? '').toString();
+    if (conversationId != widget.contact.id) {
+      return;
+    }
+
+    final messageId = (payload['message_id'] ?? '').toString();
+    if (messageId.isEmpty || !mounted) {
+      return;
+    }
+
+    setState(() {
+      final index = _messages.indexWhere((item) => item.id == messageId);
+      if (index < 0) {
+        return;
+      }
+      final current = _messages[index];
+      _messages[index] = MessageItem(
+        id: current.id,
+        text: 'Tin nhan da duoc xoa',
+        isMe: current.isMe,
+        time: current.time,
+      );
+    });
+  }
+
+  void _onRealtimeTypingUpdated(RealtimeEvent event) {
+    final payload = event.data;
+    final conversationId = (payload['conversation_id'] ?? '').toString();
+    if (conversationId != widget.contact.id || !mounted) {
+      return;
+    }
+
+    final authProvider = context.read<AuthProvider>();
+    final currentUserId = _resolveCurrentUserId(authProvider.user);
+    final senderId =
+        (payload['user_id'] ??
+                payload['sender_id'] ??
+                payload['participant_id'] ??
+                '')
+            .toString();
+    if (senderId.isNotEmpty && senderId == currentUserId) {
+      return;
+    }
+
+    final isTyping =
+        payload['is_typing'] == true ||
+        payload['isTyping'] == true ||
+        payload['typing'] == true;
+    _typingHideTimer?.cancel();
+
+    setState(() {
+      _peerTyping = isTyping;
+    });
+
+    if (isTyping) {
+      _typingHideTimer = Timer(const Duration(seconds: 3), () {
+        if (!mounted) {
+          return;
+        }
+        setState(() {
+          _peerTyping = false;
+        });
+      });
+    }
   }
 
   Future<void> _resolveContactNameIfUnknown() async {
@@ -116,6 +285,23 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
   @override
   void dispose() {
+    _typingHideTimer?.cancel();
+    _realtime.unbindConversationEvent(
+      widget.contact.id,
+      '.message.created',
+      _onRealtimeMessageCreated,
+    );
+    _realtime.unbindConversationEvent(
+      widget.contact.id,
+      '.message.deleted_for_everyone',
+      _onRealtimeMessageDeletedForEveryone,
+    );
+    _realtime.unbindConversationEvent(
+      widget.contact.id,
+      '.conversation.typing.updated',
+      _onRealtimeTypingUpdated,
+    );
+    _realtime.unsubscribeConversation(widget.contact.id);
     _scrollController.dispose();
     super.dispose();
   }
@@ -574,6 +760,17 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 },
               ),
             ),
+            if (_peerTyping)
+              const Padding(
+                padding: EdgeInsets.only(left: 20, right: 20, bottom: 6),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    'dang go tin nhan...',
+                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                ),
+              ),
             InputBar(
               isDark: isDark,
               conversationId: widget.contact.id,
