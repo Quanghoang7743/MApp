@@ -50,16 +50,23 @@ class _ChatListScreenState extends State<ChatListScreen> {
       final response = await authProvider.api.conversations.getConversations();
 
       final data = _extractList(response);
-      final mapped = data.whereType<Map<String, dynamic>>().map((item) {
+      final rawConversations = data.whereType<Map<String, dynamic>>().toList();
+      final mapped = rawConversations.map((item) {
         final chat = ChatItem.fromJson(item, currentUserId: currentUserId);
         return _resolveUnknownChatName(chat, item, currentUserId);
       }).toList();
+
+      final resolvedByParticipants = await _resolveUnknownNamesByParticipants(
+        authProvider,
+        mapped,
+        currentUserId,
+      );
 
       if (!mounted) {
         return;
       }
       setState(() {
-        chats = mapped;
+        chats = resolvedByParticipants;
         isLoading = false;
       });
     } catch (e) {
@@ -71,6 +78,73 @@ class _ChatListScreenState extends State<ChatListScreen> {
         isLoading = false;
       });
     }
+  }
+
+  Future<List<ChatItem>> _resolveUnknownNamesByParticipants(
+    AuthProvider authProvider,
+    List<ChatItem> input,
+    String currentUserId,
+  ) async {
+    final result = List<ChatItem>.from(input);
+
+    for (var i = 0; i < result.length; i++) {
+      final chat = result[i];
+      if (chat.id.isEmpty) {
+        continue;
+      }
+      if (chat.name.trim().isNotEmpty &&
+          chat.name.trim().toLowerCase() != 'unknown') {
+        continue;
+      }
+
+      try {
+        final participantsResponse = await authProvider.api.participants
+            .getParticipants(chat.id);
+        final participants = _extractList(
+          participantsResponse,
+        ).whereType<Map<String, dynamic>>();
+
+        String? resolvedName;
+        for (final p in participants) {
+          final user = p['user'] is Map<String, dynamic>
+              ? p['user'] as Map<String, dynamic>
+              : p;
+          final userId = (user['id'] ?? user['user_id'] ?? '').toString();
+          if (userId.isNotEmpty && userId == currentUserId) {
+            continue;
+          }
+
+          final candidate =
+              (user['name'] ??
+                      user['full_name'] ??
+                      user['fullName'] ??
+                      user['display_name'] ??
+                      user['username'] ??
+                      user['phone_number'])
+                  ?.toString();
+          if (candidate != null && candidate.trim().isNotEmpty) {
+            resolvedName = candidate;
+            _friendNameByUserId[userId] = candidate;
+            break;
+          }
+        }
+
+        if (resolvedName != null) {
+          result[i] = ChatItem(
+            id: chat.id,
+            name: resolvedName,
+            message: chat.message,
+            time: chat.time,
+            initials: _initialsFromName(resolvedName),
+            isTyping: chat.isTyping,
+          );
+        }
+      } catch (_) {
+        // Keep fallback Unknown for this item when participant API fails.
+      }
+    }
+
+    return result;
   }
 
   Map<String, String> _buildFriendNameMap(List<dynamic> friends) {
@@ -279,14 +353,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
       return response;
     }
     if (response is Map<String, dynamic>) {
-      final data = response['data'];
-      if (data is List) {
-        return data;
-      }
-      if (data is Map<String, dynamic>) {
-        final nested = data['data'];
-        if (nested is List) {
-          return nested;
+      for (final key in const ['data', 'items', 'results', 'participants']) {
+        final data = response[key];
+        if (data is List) {
+          return data;
+        }
+        if (data is Map<String, dynamic>) {
+          final nested = _extractList(data);
+          if (nested.isNotEmpty) {
+            return nested;
+          }
         }
       }
     }

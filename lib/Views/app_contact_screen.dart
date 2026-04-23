@@ -5,8 +5,10 @@ import 'package:provider/provider.dart';
 import '../models/chat_item.dart';
 import '../models/message_item.dart';
 import '../providers/auth_provider.dart';
+import '../providers/friend_provider.dart';
 import '../services/api_client.dart';
 import 'app_conversation_screen.dart';
+import 'widgets/contact_widgets/addfriend_view.dart';
 
 class ContactScreen extends StatefulWidget {
   const ContactScreen({super.key});
@@ -447,7 +449,22 @@ class _ContactScreenState extends State<ContactScreen> {
                   child: Column(
                     children: [
                       ElevatedButton.icon(
-                        onPressed: () {},
+                        onPressed: () async {
+                          final friendProvider = context.read<FriendProvider>();
+                          final result = await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  ChangeNotifierProvider.value(
+                                    value: friendProvider,
+                                    child: const AddFriendView(),
+                                  ),
+                            ),
+                          );
+                          if (result == true && mounted) {
+                            _fetchFriends();
+                          }
+                        },
                         icon: SvgPicture.asset(
                           'assets/icons/add-user.svg',
                           width: 20,
