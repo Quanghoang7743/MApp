@@ -32,6 +32,19 @@ class MessageItem {
     );
   }
 
+  factory MessageItem.fromCacheJson(Map<String, dynamic> json) {
+    return MessageItem(
+      id: (json['id'] ?? '').toString(),
+      text: (json['text'] ?? '').toString(),
+      isMe: json['isMe'] == true,
+      time: (json['time'] ?? '').toString(),
+    );
+  }
+
+  Map<String, dynamic> toCacheJson() {
+    return {'id': id, 'text': text, 'isMe': isMe, 'time': time};
+  }
+
   static String _resolveTextContent(Map<String, dynamic> json) {
     final direct = json['text'] ?? json['message'] ?? json['body'];
     if (direct is String && direct.trim().isNotEmpty) {

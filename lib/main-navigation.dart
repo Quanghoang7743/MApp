@@ -2,7 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:mess_app/Views/app_contact_screen.dart';
-import 'package:mess_app/Views/app_chat_list_screen.dart';
+import 'package:mess_app/Views/app_messages_shell_screen.dart';
 import 'package:mess_app/Views/app_search_screen.dart';
 import 'package:mess_app/Views/app_setting_screen.dart';
 
@@ -21,11 +21,17 @@ class _AppMainScreenState extends State<AppMainScreen> {
       case 0:
         return const ContactScreen();
       case 1:
-        return ChatListScreen(onToggleTheme: () {}, darkModeEnabled: false);
+        return MessagesShellScreen(
+          onToggleTheme: () {},
+          darkModeEnabled: false,
+        );
       case 2:
         return const SettingScreen();
       default:
-        return ChatListScreen(onToggleTheme: () {}, darkModeEnabled: false);
+        return MessagesShellScreen(
+          onToggleTheme: () {},
+          darkModeEnabled: false,
+        );
     }
   }
 

@@ -46,3 +46,6 @@ app.*.map.json
 
 #env
 .env
+
+#README
+README_CODE.md

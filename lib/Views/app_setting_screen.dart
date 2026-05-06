@@ -3,6 +3,7 @@ import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 import '../providers/auth_provider.dart';
 import 'app_home_login_screen.dart';
+import 'package:mess_app/Views/widgets/setting_widgets/storege_cache.dart';
 
 class SettingScreen extends StatefulWidget {
   const SettingScreen({super.key});
@@ -265,6 +266,43 @@ class _SettingScreenState extends State<SettingScreen> {
                             ),
                           ),
                           label: const Text('Language'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.transparent,
+                            foregroundColor: Colors.black87,
+                            shadowColor: Colors.transparent,
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 16,
+                              horizontal: 15,
+                            ),
+                            minimumSize: const Size(double.infinity, 0),
+                            alignment: Alignment.centerLeft,
+                            shape: const RoundedRectangleBorder(
+                              borderRadius: BorderRadius.zero,
+                            ),
+                          ),
+                        ),
+                        ElevatedButton.icon(
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (context) => const StorageCacheView(),
+                              ),
+                            );
+                          },
+                          icon: Container(
+                            padding: EdgeInsets.all(4),
+                            decoration: BoxDecoration(
+                              color: Color.fromARGB(255, 174, 0, 255),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: SvgPicture.asset(
+                              'assets/icons/cloud.svg',
+                              width: 20,
+                              height: 20,
+                            ),
+                          ),
+                          label: const Text('Dữ liệu trên máy'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.transparent,
                             foregroundColor: Colors.black87,

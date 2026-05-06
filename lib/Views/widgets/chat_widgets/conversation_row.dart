@@ -3,10 +3,16 @@ import 'package:flutter/material.dart';
 import '../../../models/chat_item.dart';
 
 class ConversationRow extends StatelessWidget {
-  const ConversationRow({super.key, required this.chat, required this.onTap});
+  const ConversationRow({
+    super.key,
+    required this.chat,
+    required this.onTap,
+    this.isSelected = false,
+  });
 
   final ChatItem chat;
   final VoidCallback onTap;
+  final bool isSelected;
 
   @override
   Widget build(BuildContext context) {
@@ -20,8 +26,10 @@ class ConversationRow extends StatelessWidget {
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(22),
           color: isDark
-              ? const Color(0xFF1B1F27).withValues(alpha: 0.66)
-              : Colors.white,
+              ? const Color(
+                  0xFF1B1F27,
+                ).withValues(alpha: isSelected ? 0.9 : 0.66)
+              : (isSelected ? const Color(0xFFEFF4FF) : Colors.white),
           boxShadow: [
             BoxShadow(
               color: Colors.black.withValues(alpha: isDark ? 0.24 : 0.04),

@@ -15,4 +15,5 @@ class ImageSetting {
   static const String earth = 'assets/icons/earth.svg';
   static const String message = 'assets/icons/message.svg';
   static const String logout = 'assets/icons/logout.svg';
+  static const String cloud = 'assets/icons/cloud.svg';
 }
