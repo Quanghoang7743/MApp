@@ -9,6 +9,7 @@ import '../models/message_item.dart';
 import '../providers/auth_provider.dart';
 import '../services/api_client.dart';
 import '../services/environment.dart';
+import '../services/local/chat_cache_service.dart';
 import '../services/realtime/realtime_service.dart';
 import 'widgets/chat_widgets/input_bar.dart';
 import 'widgets/chat_widgets/message_bubble.dart';
@@ -19,11 +20,13 @@ class ConversationScreen extends StatefulWidget {
     required this.onBack,
     required this.contact,
     required this.messages,
+    this.embedded = false,
   });
 
   final VoidCallback onBack;
   final ChatItem contact;
   final List<MessageItem> messages;
+  final bool embedded;
 
   @override
   State<ConversationScreen> createState() => _ConversationScreenState();
@@ -34,6 +37,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
   late String _contactName;
   final ScrollController _scrollController = ScrollController();
   final RealtimeService _realtime = RealtimeService.instance;
+  final ChatCacheService _cacheService = ChatCacheService();
   bool _sending = false;
   bool _peerTyping = false;
   Timer? _typingHideTimer;
@@ -43,10 +47,26 @@ class _ConversationScreenState extends State<ConversationScreen> {
     super.initState();
     _contactName = widget.contact.name;
     _messages = _sortMessagesByTime(List<MessageItem>.from(widget.messages));
+    Future.microtask(_loadCachedMessages);
     Future.microtask(_reloadMessagesFromServer);
     Future.microtask(_resolveContactNameIfUnknown);
     Future.microtask(_setupRealtime);
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
+  }
+
+  Future<void> _loadCachedMessages() async {
+    if (widget.contact.id.isEmpty) {
+      return;
+    }
+    final cached = await _cacheService.readMessages(widget.contact.id);
+    if (!mounted || cached.isEmpty) {
+      return;
+    }
+    setState(() {
+      _messages = _messages.isEmpty
+          ? _sortMessagesByTime(cached)
+          : _mergeMessages(_messages, cached);
+    });
   }
 
   Future<void> _setupRealtime() async {
@@ -167,6 +187,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
         time: current.time,
       );
     });
+    _cacheService.saveMessages(widget.contact.id, _messages);
   }
 
   void _onRealtimeTypingUpdated(RealtimeEvent event) {
@@ -329,6 +350,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
       _messages = _sortMessagesByTime(_messages);
       _sending = true;
     });
+    await _cacheService.saveMessages(widget.contact.id, _messages);
     _scrollToBottom();
 
     try {
@@ -357,6 +379,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
           _messages.add(serverMessage);
           _messages = _sortMessagesByTime(_messages);
         });
+        await _cacheService.saveMessages(widget.contact.id, _messages);
         _scrollToBottom();
       }
     } on ApiException catch (e) {
@@ -368,6 +391,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
         _messages.removeWhere((item) => item.id == optimistic.id);
         _messages = _sortMessagesByTime(_messages);
       });
+      await _cacheService.saveMessages(widget.contact.id, _messages);
+      if (!mounted) {
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Gui tin nhan that bai: ${_readableApiError(e)}'),
@@ -382,6 +409,10 @@ class _ConversationScreenState extends State<ConversationScreen> {
         _messages.removeWhere((item) => item.id == optimistic.id);
         _messages = _sortMessagesByTime(_messages);
       });
+      await _cacheService.saveMessages(widget.contact.id, _messages);
+      if (!mounted) {
+        return;
+      }
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Gui tin nhan that bai: $e')));
@@ -552,9 +583,9 @@ class _ConversationScreenState extends State<ConversationScreen> {
           merged.add(serverItem);
         }
 
-        _messages = merged;
-        _messages = _sortMessagesByTime(_messages);
+        _messages = _mergeMessages(_messages, mapped);
       });
+      await _cacheService.saveMessages(widget.contact.id, _messages);
       _scrollToBottom();
     } catch (_) {
       // Keep current local messages when reload fails.
@@ -579,6 +610,30 @@ class _ConversationScreenState extends State<ConversationScreen> {
       return 0;
     });
     return list;
+  }
+
+  List<MessageItem> _mergeMessages(
+    List<MessageItem> current,
+    List<MessageItem> incoming,
+  ) {
+    final byId = <String, MessageItem>{};
+    final tempMessages = <MessageItem>[];
+
+    for (final item in current) {
+      if (item.id.startsWith('temp-')) {
+        tempMessages.add(item);
+      } else if (item.id.isNotEmpty) {
+        byId[item.id] = item;
+      }
+    }
+
+    for (final item in incoming) {
+      if (item.id.isNotEmpty) {
+        byId[item.id] = item;
+      }
+    }
+
+    return _sortMessagesByTime([...byId.values, ...tempMessages]);
   }
 
   void _scrollToBottom() {
@@ -670,115 +725,121 @@ class _ConversationScreenState extends State<ConversationScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return Scaffold(
-      body: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: isDark
-                ? [const Color(0xFF101216), const Color(0xFF161A21)]
-                : [const Color(0xFFFFFFFF), const Color(0xFFF5F7FB)],
-          ),
+    final content = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: isDark
+              ? [const Color(0xFF101216), const Color(0xFF161A21)]
+              : [const Color(0xFFFFFFFF), const Color(0xFFF5F7FB)],
         ),
-        child: Column(
-          children: [
-            SafeArea(
-              bottom: false,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
-                child: Row(
-                  children: [
+      ),
+      child: Column(
+        children: [
+          SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+              child: Row(
+                children: [
+                  if (!widget.embedded)
                     IconButton(
                       onPressed: widget.onBack,
                       icon: const Icon(
                         Icons.arrow_back_ios_new_rounded,
                         size: 18,
                       ),
-                    ),
-                    CircleAvatar(
-                      radius: 14,
-                      backgroundColor: isDark
-                          ? const Color(0xFF2B313A)
-                          : const Color(0xFFE7EBF2),
-                      child: Text(
-                        _displayInitials(),
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
+                    )
+                  else
+                    const SizedBox(width: 8),
+                  CircleAvatar(
+                    radius: 14,
+                    backgroundColor: isDark
+                        ? const Color(0xFF2B313A)
+                        : const Color(0xFFE7EBF2),
+                    child: Text(
+                      _displayInitials(),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(_contactName, style: theme.textTheme.titleMedium),
-                    const Spacer(),
-                    Row(
-                      children: [
-                        IconButton(
-                          onPressed: () {},
-                          icon: SvgPicture.asset(
-                            'assets/icons/call.svg',
-                            width: 20,
-                            height: 20,
-                          ),
-                        ),
-                        IconButton(
-                          onPressed: () {},
-                          icon: SvgPicture.asset(
-                            'assets/icons/video-call.svg',
-                            width: 25,
-                            height: 25,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            Expanded(
-              child: ListView.separated(
-                controller: _scrollController,
-                padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
-                itemCount: _messages.length,
-                separatorBuilder: (context, index) =>
-                    const SizedBox(height: 10),
-                itemBuilder: (context, index) {
-                  final message = _messages[index];
-                  final displayMessage = MessageItem(
-                    id: message.id,
-                    text: message.text,
-                    isMe: message.isMe,
-                    time: _formatTime(message.time),
-                  );
-                  final isSendingMessage =
-                      _sending && message.id.startsWith('temp-');
-                  return MessageBubble(
-                    message: displayMessage,
-                    isSending: isSendingMessage,
-                  );
-                },
-              ),
-            ),
-            if (_peerTyping)
-              const Padding(
-                padding: EdgeInsets.only(left: 20, right: 20, bottom: 6),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text(
-                    'dang go tin nhan...',
-                    style: TextStyle(fontSize: 12, color: Colors.black54),
                   ),
+                  const SizedBox(width: 10),
+                  Text(_contactName, style: theme.textTheme.titleMedium),
+                  const Spacer(),
+                  Row(
+                    children: [
+                      IconButton(
+                        onPressed: () {},
+                        icon: SvgPicture.asset(
+                          'assets/icons/call.svg',
+                          width: 20,
+                          height: 20,
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () {},
+                        icon: SvgPicture.asset(
+                          'assets/icons/video-call.svg',
+                          width: 25,
+                          height: 25,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+          Expanded(
+            child: ListView.separated(
+              controller: _scrollController,
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
+              itemCount: _messages.length,
+              separatorBuilder: (context, index) => const SizedBox(height: 10),
+              itemBuilder: (context, index) {
+                final message = _messages[index];
+                final displayMessage = MessageItem(
+                  id: message.id,
+                  text: message.text,
+                  isMe: message.isMe,
+                  time: _formatTime(message.time),
+                );
+                final isSendingMessage =
+                    _sending && message.id.startsWith('temp-');
+                return MessageBubble(
+                  message: displayMessage,
+                  isSending: isSendingMessage,
+                );
+              },
+            ),
+          ),
+          if (_peerTyping)
+            const Padding(
+              padding: EdgeInsets.only(left: 20, right: 20, bottom: 6),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(
+                  'dang go tin nhan...',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
                 ),
               ),
-            InputBar(
-              isDark: isDark,
-              conversationId: widget.contact.id,
-              onSend: _handleSend,
             ),
-          ],
-        ),
+          InputBar(
+            isDark: isDark,
+            conversationId: widget.contact.id,
+            onSend: _handleSend,
+          ),
+        ],
       ),
     );
+
+    if (widget.embedded) {
+      return content;
+    }
+
+    return Scaffold(body: content);
   }
 }

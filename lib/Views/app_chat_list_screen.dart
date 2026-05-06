@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../models/chat_item.dart';
 import '../models/message_item.dart';
 import '../providers/auth_provider.dart';
+import '../services/local/chat_cache_service.dart';
 import 'app_conversation_screen.dart';
 import 'widgets/chat_widgets/conversation_row.dart';
 
@@ -13,10 +14,16 @@ class ChatListScreen extends StatefulWidget {
     super.key,
     required this.onToggleTheme,
     required this.darkModeEnabled,
+    this.onChatSelected,
+    this.selectedConversationId,
+    this.embedded = false,
   });
 
   final VoidCallback onToggleTheme;
   final bool darkModeEnabled;
+  final ValueChanged<ConversationSelection>? onChatSelected;
+  final String? selectedConversationId;
+  final bool embedded;
 
   @override
   State<ChatListScreen> createState() => _ChatListScreenState();
@@ -25,13 +32,26 @@ class ChatListScreen extends StatefulWidget {
 class _ChatListScreenState extends State<ChatListScreen> {
   List<ChatItem> chats = [];
   Map<String, String> _friendNameByUserId = {};
+  final ChatCacheService _cacheService = ChatCacheService();
   bool isLoading = true;
   String? errorMessage;
 
   @override
   void initState() {
     super.initState();
+    _loadCachedChats();
     _fetchConversations();
+  }
+
+  Future<void> _loadCachedChats() async {
+    final cached = await _cacheService.readChats();
+    if (!mounted || cached.isEmpty) {
+      return;
+    }
+    setState(() {
+      chats = cached;
+      isLoading = false;
+    });
   }
 
   Future<void> _fetchConversations() async {
@@ -69,12 +89,13 @@ class _ChatListScreenState extends State<ChatListScreen> {
         chats = resolvedByParticipants;
         isLoading = false;
       });
+      await _cacheService.saveChats(resolvedByParticipants);
     } catch (e) {
       if (!mounted) {
         return;
       }
       setState(() {
-        errorMessage = 'Loi tai danh sach: $e';
+        errorMessage = chats.isEmpty ? 'Loi tai danh sach: $e' : null;
         isLoading = false;
       });
     }
@@ -313,19 +334,16 @@ class _ChatListScreenState extends State<ChatListScreen> {
 
   Future<void> _openConversation(ChatItem chat) async {
     try {
-      final authProvider = context.read<AuthProvider>();
-      final currentUserId = _resolveCurrentUserId(authProvider.user);
-      final response = await authProvider.api.messages.getMessages(chat.id);
-      final data = _extractList(response);
-
-      final messages = data
-          .whereType<Map<String, dynamic>>()
-          .map(
-            (item) => MessageItem.fromJson(item, currentUserId: currentUserId),
-          )
-          .toList();
+      final cachedMessages = await _cacheService.readMessages(chat.id);
 
       if (!mounted) {
+        return;
+      }
+
+      if (widget.onChatSelected != null) {
+        widget.onChatSelected!(
+          ConversationSelection(chat: chat, messages: cachedMessages),
+        );
         return;
       }
 
@@ -334,7 +352,8 @@ class _ChatListScreenState extends State<ChatListScreen> {
           builder: (_) => ConversationScreen(
             onBack: () => Navigator.of(context).pop(),
             contact: chat,
-            messages: messages,
+            messages: cachedMessages,
+            embedded: false,
           ),
         ),
       );
@@ -420,105 +439,117 @@ class _ChatListScreenState extends State<ChatListScreen> {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
 
-    return Scaffold(
-      body: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            begin: Alignment.topCenter,
-            end: Alignment.bottomCenter,
-            colors: isDark
-                ? [const Color(0xFF111318), const Color(0xFF171B21)]
-                : [const Color(0xFFF9FAFC), const Color(0xFFF2F4F8)],
-          ),
+    final content = DecoratedBox(
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+          begin: Alignment.topCenter,
+          end: Alignment.bottomCenter,
+          colors: isDark
+              ? [const Color(0xFF111318), const Color(0xFF171B21)]
+              : [const Color(0xFFF9FAFC), const Color(0xFFF2F4F8)],
         ),
-        child: SafeArea(
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    ElevatedButton(
-                      onPressed: () {},
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.white,
-                        shadowColor: Colors.transparent,
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                      ),
-                      child: const Text(
-                        'Sửa',
-                        style: TextStyle(
-                          color: Colors.black,
-                          fontWeight: FontWeight.w500,
-                        ),
-                      ),
+      ),
+      child: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  ElevatedButton(
+                    onPressed: () {},
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.white,
+                      shadowColor: Colors.transparent,
+                      padding: const EdgeInsets.symmetric(vertical: 10),
                     ),
-                    const Spacer(),
-                    const Text(
-                      'Mox',
+                    child: const Text(
+                      'Sửa',
                       style: TextStyle(
-                        fontSize: 20,
-                        fontWeight: FontWeight.w600,
+                        color: Colors.black,
+                        fontWeight: FontWeight.w500,
                       ),
                     ),
-                    const Spacer(),
-                    IconButton(
-                      icon: SvgPicture.asset(
-                        'assets/icons/qr-scanner.svg',
-                        width: 30,
-                        height: 30,
-                        colorFilter: const ColorFilter.mode(
-                          Colors.black,
-                          BlendMode.srcIn,
-                        ),
+                  ),
+                  const Spacer(),
+                  const Text(
+                    'Mox',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: SvgPicture.asset(
+                      'assets/icons/qr-scanner.svg',
+                      width: 30,
+                      height: 30,
+                      colorFilter: const ColorFilter.mode(
+                        Colors.black,
+                        BlendMode.srcIn,
                       ),
-                      onPressed: () {},
                     ),
-                  ],
-                ),
-                const SizedBox(height: 18),
-                Expanded(
-                  child: isLoading
-                      ? const Center(child: CircularProgressIndicator())
-                      : errorMessage != null
-                      ? Center(
-                          child: Text(
-                            errorMessage!,
-                            style: const TextStyle(color: Colors.red),
-                          ),
-                        )
-                      : chats.isEmpty
-                      ? const Center(
-                          child: Text('Khong co cuoc tro chuyen nao'),
-                        )
-                      : ListView.separated(
-                          physics: const BouncingScrollPhysics(),
-                          itemCount: chats.length,
-                          separatorBuilder: (context, index) =>
-                              const SizedBox(height: 12),
-                          itemBuilder: (context, index) {
-                            final chat = chats[index];
-                            final displayChat = ChatItem(
-                              id: chat.id,
-                              name: chat.name,
-                              message: chat.message,
-                              time: _formatTime(chat.time),
-                              initials: chat.initials,
-                              isTyping: chat.isTyping,
-                            );
-                            return ConversationRow(
-                              chat: displayChat,
-                              onTap: () => _openConversation(chat),
-                            );
-                          },
+                    onPressed: () {},
+                  ),
+                ],
+              ),
+              const SizedBox(height: 18),
+              Expanded(
+                child: isLoading
+                    ? const Center(child: CircularProgressIndicator())
+                    : errorMessage != null
+                    ? Center(
+                        child: Text(
+                          errorMessage!,
+                          style: const TextStyle(color: Colors.red),
                         ),
-                ),
-              ],
-            ),
+                      )
+                    : chats.isEmpty
+                    ? const Center(child: Text('Không có cuộc trò chuyện nào'))
+                    : ListView.separated(
+                        physics: const BouncingScrollPhysics(),
+                        itemCount: chats.length,
+                        separatorBuilder: (context, index) =>
+                            const SizedBox(height: 12),
+                        itemBuilder: (context, index) {
+                          final chat = chats[index];
+                          final displayChat = ChatItem(
+                            id: chat.id,
+                            name: chat.name,
+                            message: chat.message,
+                            time: _formatTime(chat.time),
+                            initials: chat.initials,
+                            isTyping: chat.isTyping,
+                          );
+                          final isSelected =
+                              widget.selectedConversationId != null &&
+                              widget.selectedConversationId == chat.id;
+                          return ConversationRow(
+                            chat: displayChat,
+                            onTap: () => _openConversation(chat),
+                            isSelected: isSelected,
+                          );
+                        },
+                      ),
+              ),
+            ],
           ),
         ),
       ),
     );
+
+    if (widget.embedded) {
+      return content;
+    }
+
+    return Scaffold(
+      body: DecoratedBox(decoration: const BoxDecoration(), child: content),
+    );
   }
+}
+
+class ConversationSelection {
+  const ConversationSelection({required this.chat, required this.messages});
+
+  final ChatItem chat;
+  final List<MessageItem> messages;
 }

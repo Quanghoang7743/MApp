@@ -16,6 +16,12 @@ class MessageBubble extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final screenWidth = MediaQuery.of(context).size.width;
+    final maxBubbleWidth = screenWidth >= 900
+        ? 460.0
+        : screenWidth >= 700
+        ? 380.0
+        : 250.0;
     return Align(
       alignment: message.isMe ? Alignment.centerRight : Alignment.centerLeft,
       child: Column(
@@ -25,7 +31,7 @@ class MessageBubble extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 250),
+            constraints: BoxConstraints(maxWidth: maxBubbleWidth),
             child: DecoratedBox(
               decoration: BoxDecoration(
                 color: message.isMe

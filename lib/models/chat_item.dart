@@ -37,6 +37,28 @@ class ChatItem {
     );
   }
 
+  factory ChatItem.fromCacheJson(Map<String, dynamic> json) {
+    return ChatItem(
+      id: (json['id'] ?? '').toString(),
+      name: (json['name'] ?? 'Unknown').toString(),
+      message: (json['message'] ?? '').toString(),
+      time: (json['time'] ?? '').toString(),
+      initials: (json['initials'] ?? '?').toString(),
+      isTyping: json['isTyping'] == true,
+    );
+  }
+
+  Map<String, dynamic> toCacheJson() {
+    return {
+      'id': id,
+      'name': name,
+      'message': message,
+      'time': time,
+      'initials': initials,
+      'isTyping': isTyping,
+    };
+  }
+
   static Map<String, dynamic> _normalizeSource(Map<String, dynamic> json) {
     final conversation = json['conversation'];
     if (conversation is Map<String, dynamic>) {
