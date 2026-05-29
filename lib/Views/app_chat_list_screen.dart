@@ -30,17 +30,31 @@ class ChatListScreen extends StatefulWidget {
 }
 
 class _ChatListScreenState extends State<ChatListScreen> {
+  final ChatCacheService _cacheService = ChatCacheService();
+  final TextEditingController _searchController = TextEditingController();
+
   List<ChatItem> chats = [];
   Map<String, String> _friendNameByUserId = {};
-  final ChatCacheService _cacheService = ChatCacheService();
   bool isLoading = true;
   String? errorMessage;
+  int _selectedFilter = 0;
 
   @override
   void initState() {
     super.initState();
     _loadCachedChats();
     _fetchConversations();
+    _searchController.addListener(() {
+      if (mounted) {
+        setState(() {});
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadCachedChats() async {
@@ -126,6 +140,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
         ).whereType<Map<String, dynamic>>();
 
         String? resolvedName;
+        String? avatarUrl;
         for (final p in participants) {
           final user = p['user'] is Map<String, dynamic>
               ? p['user'] as Map<String, dynamic>
@@ -143,8 +158,12 @@ class _ChatListScreenState extends State<ChatListScreen> {
                       user['username'] ??
                       user['phone_number'])
                   ?.toString();
+          final candidateAvatar =
+              (user['avatar_url'] ?? user['avatarUrl'] ?? user['photo_url'])
+                  ?.toString();
           if (candidate != null && candidate.trim().isNotEmpty) {
             resolvedName = candidate;
+            avatarUrl = candidateAvatar;
             _friendNameByUserId[userId] = candidate;
             break;
           }
@@ -158,6 +177,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
             time: chat.time,
             initials: _initialsFromName(resolvedName),
             isTyping: chat.isTyping,
+            avatarUrl: avatarUrl ?? chat.avatarUrl,
+            unreadCount: chat.unreadCount,
+            isPinned: chat.isPinned,
+            isGroup: chat.isGroup,
+            isStarred: chat.isStarred,
           );
         }
       } catch (_) {
@@ -261,6 +285,11 @@ class _ChatListScreenState extends State<ChatListScreen> {
           time: chat.time,
           initials: _initialsFromName(mappedName),
           isTyping: chat.isTyping,
+          avatarUrl: chat.avatarUrl,
+          unreadCount: chat.unreadCount,
+          isPinned: chat.isPinned,
+          isGroup: chat.isGroup,
+          isStarred: chat.isStarred,
         );
       }
     }
@@ -434,103 +463,210 @@ class _ChatListScreenState extends State<ChatListScreen> {
     return raw;
   }
 
+  List<ChatItem> _visibleChats() {
+    final keyword = _searchController.text.trim().toLowerCase();
+    var filtered = chats.where((chat) {
+      final matchesSearch =
+          keyword.isEmpty ||
+          chat.name.toLowerCase().contains(keyword) ||
+          chat.message.toLowerCase().contains(keyword);
+
+      if (!matchesSearch) {
+        return false;
+      }
+
+      switch (_selectedFilter) {
+        case 1:
+          return chat.unreadCount > 0;
+        case 2:
+          return chat.isGroup;
+        case 3:
+          return chat.isStarred;
+        default:
+          return true;
+      }
+    }).toList();
+
+    filtered.sort((a, b) {
+      if (a.isPinned != b.isPinned) {
+        return a.isPinned ? -1 : 1;
+      }
+      return 0;
+    });
+    return filtered;
+  }
+
+  void _showComingSoon(String label) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$label đang được phát triển')));
+  }
+
+  Widget _buildBody(List<ChatItem> visibleChats) {
+    if (isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    if (errorMessage != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            errorMessage!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xFFCB3A5D),
+              fontSize: 14,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+      );
+    }
+
+    if (visibleChats.isEmpty) {
+      return const Center(
+        child: Text(
+          'Không có cuộc trò chuyện nào',
+          style: TextStyle(color: Color(0xFF8D8DA3), fontSize: 15),
+        ),
+      );
+    }
+
+    return RefreshIndicator(
+      onRefresh: _fetchConversations,
+      child: ListView.separated(
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
+        padding: const EdgeInsets.only(bottom: 18),
+        itemCount: visibleChats.length,
+        separatorBuilder: (context, index) => const SizedBox(height: 12),
+        itemBuilder: (context, index) {
+          final chat = visibleChats[index];
+          final displayChat = ChatItem(
+            id: chat.id,
+            name: chat.name,
+            message: chat.message,
+            time: _formatTime(chat.time),
+            initials: chat.initials,
+            isTyping: chat.isTyping,
+            avatarUrl: chat.avatarUrl,
+            unreadCount: chat.unreadCount,
+            isPinned: chat.isPinned,
+            isGroup: chat.isGroup,
+            isStarred: chat.isStarred,
+          );
+          final isSelected =
+              widget.selectedConversationId != null &&
+              widget.selectedConversationId == chat.id;
+          return ConversationRow(
+            chat: displayChat,
+            onTap: () => _openConversation(chat),
+            isSelected: isSelected,
+            compact: !widget.embedded,
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final showStarredTab = widget.embedded;
+    final visibleChats = _visibleChats();
 
     final content = DecoratedBox(
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topCenter,
-          end: Alignment.bottomCenter,
-          colors: isDark
-              ? [const Color(0xFF111318), const Color(0xFF171B21)]
-              : [const Color(0xFFF9FAFC), const Color(0xFFF2F4F8)],
-        ),
-      ),
+      decoration: const BoxDecoration(color: Colors.transparent),
       child: SafeArea(
+        top: !widget.embedded,
+        bottom: false,
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(20, 0, 20, 12),
+          padding: EdgeInsets.fromLTRB(
+            widget.embedded ? 18 : 18,
+            widget.embedded ? 18 : 10,
+            widget.embedded ? 18 : 18,
+            0,
+          ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Row(
                 children: [
-                  ElevatedButton(
-                    onPressed: () {},
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.white,
-                      shadowColor: Colors.transparent,
-                      padding: const EdgeInsets.symmetric(vertical: 10),
-                    ),
-                    child: const Text(
-                      'Sửa',
-                      style: TextStyle(
-                        color: Colors.black,
-                        fontWeight: FontWeight.w500,
-                      ),
-                    ),
-                  ),
+                  const _MoxWordmark(),
                   const Spacer(),
-                  const Text(
-                    'Mox',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
-                  ),
-                  const Spacer(),
-                  IconButton(
-                    icon: SvgPicture.asset(
-                      'assets/icons/qr-scanner.svg',
-                      width: 30,
-                      height: 30,
-                      colorFilter: const ColorFilter.mode(
-                        Colors.black,
-                        BlendMode.srcIn,
-                      ),
+                  _SquareIconButton(
+                    onTap: () => _showComingSoon('Tạo cuộc trò chuyện'),
+                    icon: const Icon(
+                      Icons.edit_outlined,
+                      color: Color(0xFF1F2040),
+                      size: 24,
                     ),
-                    onPressed: () {},
                   ),
                 ],
               ),
               const SizedBox(height: 18),
-              Expanded(
-                child: isLoading
-                    ? const Center(child: CircularProgressIndicator())
-                    : errorMessage != null
-                    ? Center(
-                        child: Text(
-                          errorMessage!,
-                          style: const TextStyle(color: Colors.red),
-                        ),
-                      )
-                    : chats.isEmpty
-                    ? const Center(child: Text('Không có cuộc trò chuyện nào'))
-                    : ListView.separated(
-                        physics: const BouncingScrollPhysics(),
-                        itemCount: chats.length,
-                        separatorBuilder: (context, index) =>
-                            const SizedBox(height: 12),
-                        itemBuilder: (context, index) {
-                          final chat = chats[index];
-                          final displayChat = ChatItem(
-                            id: chat.id,
-                            name: chat.name,
-                            message: chat.message,
-                            time: _formatTime(chat.time),
-                            initials: chat.initials,
-                            isTyping: chat.isTyping,
-                          );
-                          final isSelected =
-                              widget.selectedConversationId != null &&
-                              widget.selectedConversationId == chat.id;
-                          return ConversationRow(
-                            chat: displayChat,
-                            onTap: () => _openConversation(chat),
-                            isSelected: isSelected,
-                          );
-                        },
-                      ),
+              if (!widget.embedded)
+                const Text(
+                  'Trò chuyện',
+                  style: TextStyle(
+                    fontSize: 28,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF1A1D45),
+                    letterSpacing: -0.6,
+                  ),
+                ),
+              if (!widget.embedded) const SizedBox(height: 18),
+              Row(
+                children: [
+                  Expanded(
+                    child: _ChatSearchField(controller: _searchController),
+                  ),
+                  const SizedBox(width: 12),
+                  _SquareIconButton(
+                    onTap: () => _showComingSoon('Bộ lọc'),
+                    icon: const Icon(
+                      Icons.tune_rounded,
+                      color: Color(0xFF444563),
+                    ),
+                  ),
+                ],
               ),
+              const SizedBox(height: 18),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    _FilterChipButton(
+                      label: 'Tất cả',
+                      selected: _selectedFilter == 0,
+                      onTap: () => setState(() => _selectedFilter = 0),
+                    ),
+                    const SizedBox(width: 12),
+                    _FilterChipButton(
+                      label: 'Chưa đọc',
+                      selected: _selectedFilter == 1,
+                      onTap: () => setState(() => _selectedFilter = 1),
+                    ),
+                    const SizedBox(width: 12),
+                    _FilterChipButton(
+                      label: 'Nhóm',
+                      selected: _selectedFilter == 2,
+                      onTap: () => setState(() => _selectedFilter = 2),
+                    ),
+                    if (showStarredTab) ...[
+                      const SizedBox(width: 12),
+                      _FilterChipButton(
+                        label: 'Gắn sao',
+                        selected: _selectedFilter == 3,
+                        onTap: () => setState(() => _selectedFilter = 3),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              const SizedBox(height: 18),
+              Expanded(child: _buildBody(visibleChats)),
             ],
           ),
         ),
@@ -541,9 +677,7 @@ class _ChatListScreenState extends State<ChatListScreen> {
       return content;
     }
 
-    return Scaffold(
-      body: DecoratedBox(decoration: const BoxDecoration(), child: content),
-    );
+    return Scaffold(backgroundColor: const Color(0xFFF8F6FF), body: content);
   }
 }
 
@@ -552,4 +686,139 @@ class ConversationSelection {
 
   final ChatItem chat;
   final List<MessageItem> messages;
+}
+
+class _MoxWordmark extends StatelessWidget {
+  const _MoxWordmark();
+
+  @override
+  Widget build(BuildContext context) {
+    const gradient = LinearGradient(
+      colors: [Color(0xFF74A0FF), Color(0xFF7250FF)],
+    );
+
+    return ShaderMask(
+      blendMode: BlendMode.srcIn,
+      shaderCallback: gradient.createShader,
+      child: const Text(
+        'Mox',
+        style: TextStyle(
+          fontSize: 32,
+          fontWeight: FontWeight.w800,
+          letterSpacing: -1.6,
+          height: 1,
+        ),
+      ),
+    );
+  }
+}
+
+class _SquareIconButton extends StatelessWidget {
+  const _SquareIconButton({required this.onTap, required this.icon});
+
+  final VoidCallback onTap;
+  final Widget icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: const Color(0xFFF7F7FC),
+      borderRadius: BorderRadius.circular(18),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: SizedBox(width: 54, height: 54, child: Center(child: icon)),
+      ),
+    );
+  }
+}
+
+class _ChatSearchField extends StatelessWidget {
+  const _ChatSearchField({required this.controller});
+
+  final TextEditingController controller;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      decoration: InputDecoration(
+        hintText: 'Tìm kiếm',
+        hintStyle: const TextStyle(color: Color(0xFF979CB3), fontSize: 16),
+        filled: true,
+        fillColor: const Color(0xFFF3F4F8),
+        prefixIcon: Padding(
+          padding: const EdgeInsets.all(16),
+          child: SvgPicture.asset(
+            'assets/icons/search.svg',
+            width: 22,
+            height: 22,
+            colorFilter: const ColorFilter.mode(
+              Color(0xFF6A6C87),
+              BlendMode.srcIn,
+            ),
+          ),
+        ),
+        prefixIconConstraints: const BoxConstraints(
+          minWidth: 54,
+          minHeight: 54,
+        ),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 16,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: BorderSide.none,
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(20),
+          borderSide: const BorderSide(color: Color(0xFFD9D8FF)),
+        ),
+      ),
+    );
+  }
+}
+
+class _FilterChipButton extends StatelessWidget {
+  const _FilterChipButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(18),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(18),
+            gradient: selected
+                ? const LinearGradient(
+                    colors: [Color(0xFF5D5BFF), Color(0xFF7A66FF)],
+                  )
+                : null,
+            color: selected ? null : const Color(0xFFF4F5F8),
+          ),
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w700,
+              color: selected ? Colors.white : const Color(0xFF2A2C45),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

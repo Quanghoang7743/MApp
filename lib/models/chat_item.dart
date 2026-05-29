@@ -6,6 +6,11 @@ class ChatItem {
     required this.time,
     required this.initials,
     this.isTyping = false,
+    this.avatarUrl,
+    this.unreadCount = 0,
+    this.isPinned = false,
+    this.isGroup = false,
+    this.isStarred = false,
   });
 
   final String id;
@@ -14,6 +19,11 @@ class ChatItem {
   final String time;
   final String initials;
   final bool isTyping;
+  final String? avatarUrl;
+  final int unreadCount;
+  final bool isPinned;
+  final bool isGroup;
+  final bool isStarred;
 
   factory ChatItem.fromJson(
     Map<String, dynamic> json, {
@@ -34,6 +44,19 @@ class ChatItem {
       time: _resolveTime(source),
       initials: _resolveInitials(displayName),
       isTyping: source['is_typing'] == true || source['isTyping'] == true,
+      avatarUrl: _resolveAvatarUrl(source),
+      unreadCount: _resolveUnreadCount(source),
+      isPinned: _resolveBoolean(source, const [
+        'is_pinned',
+        'isPinned',
+        'pinned',
+      ]),
+      isGroup: _resolveBoolean(source, const ['is_group', 'isGroup', 'group']),
+      isStarred: _resolveBoolean(source, const [
+        'is_starred',
+        'isStarred',
+        'starred',
+      ]),
     );
   }
 
@@ -45,6 +68,11 @@ class ChatItem {
       time: (json['time'] ?? '').toString(),
       initials: (json['initials'] ?? '?').toString(),
       isTyping: json['isTyping'] == true,
+      avatarUrl: json['avatarUrl']?.toString(),
+      unreadCount: (json['unreadCount'] as num?)?.toInt() ?? 0,
+      isPinned: json['isPinned'] == true,
+      isGroup: json['isGroup'] == true,
+      isStarred: json['isStarred'] == true,
     );
   }
 
@@ -56,6 +84,11 @@ class ChatItem {
       'time': time,
       'initials': initials,
       'isTyping': isTyping,
+      'avatarUrl': avatarUrl,
+      'unreadCount': unreadCount,
+      'isPinned': isPinned,
+      'isGroup': isGroup,
+      'isStarred': isStarred,
     };
   }
 
@@ -174,6 +207,84 @@ class ChatItem {
       return createdAt;
     }
     return 'Now';
+  }
+
+  static String? _resolveAvatarUrl(Map<String, dynamic> json) {
+    final direct = [json['avatar_url'], json['avatarUrl'], json['photo_url']]
+        .firstWhere(
+          (value) => value is String && value.trim().isNotEmpty,
+          orElse: () => null,
+        );
+    if (direct is String) {
+      return direct;
+    }
+
+    final participants =
+        json['participants'] ??
+        json['members'] ??
+        json['conversation_participants'];
+    if (participants is List) {
+      for (final participant in participants) {
+        if (participant is! Map<String, dynamic>) {
+          continue;
+        }
+        final user =
+            participant['user'] ??
+            participant['member'] ??
+            participant['profile'] ??
+            participant;
+        if (user is! Map<String, dynamic>) {
+          continue;
+        }
+        for (final key in const ['avatar_url', 'avatarUrl', 'photo_url']) {
+          final value = user[key];
+          if (value is String && value.trim().isNotEmpty) {
+            return value;
+          }
+        }
+      }
+    }
+
+    return null;
+  }
+
+  static int _resolveUnreadCount(Map<String, dynamic> json) {
+    for (final key in const [
+      'unread_count',
+      'unreadCount',
+      'unread_messages_count',
+    ]) {
+      final value = json[key];
+      if (value is num) {
+        return value.toInt();
+      }
+      if (value is String) {
+        final parsed = int.tryParse(value);
+        if (parsed != null) {
+          return parsed;
+        }
+      }
+    }
+    return 0;
+  }
+
+  static bool _resolveBoolean(Map<String, dynamic> json, List<String> keys) {
+    for (final key in keys) {
+      final value = json[key];
+      if (value is bool) {
+        return value;
+      }
+      if (value is num) {
+        return value != 0;
+      }
+      if (value is String) {
+        final normalized = value.toLowerCase();
+        if (normalized == 'true' || normalized == '1') {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   static String _resolveInitials(String name) {

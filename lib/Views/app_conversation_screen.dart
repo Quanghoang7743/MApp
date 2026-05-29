@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_svg/flutter_svg.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat_item.dart';
@@ -13,6 +12,7 @@ import '../services/local/chat_cache_service.dart';
 import '../services/realtime/realtime_service.dart';
 import 'widgets/chat_widgets/input_bar.dart';
 import 'widgets/chat_widgets/message_bubble.dart';
+import 'widgets/chat_widgets/typing_indicator.dart';
 
 class ConversationScreen extends StatefulWidget {
   const ConversationScreen({
@@ -720,10 +720,27 @@ class _ConversationScreenState extends State<ConversationScreen> {
     return raw;
   }
 
+  String? _avatarUrl() {
+    final avatar = widget.contact.avatarUrl;
+    if (avatar != null && avatar.trim().isNotEmpty) {
+      return avatar;
+    }
+    return null;
+  }
+
+  void _showComingSoon(String label) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('$label đang được phát triển')));
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final lastOwnMessage = _messages.lastWhere(
+      (message) => message.isMe,
+      orElse: () => const MessageItem(id: '', text: '', isMe: false, time: ''),
+    );
 
     final content = DecoratedBox(
       decoration: BoxDecoration(
@@ -731,8 +748,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
           begin: Alignment.topCenter,
           end: Alignment.bottomCenter,
           colors: isDark
-              ? [const Color(0xFF101216), const Color(0xFF161A21)]
-              : [const Color(0xFFFFFFFF), const Color(0xFFF5F7FB)],
+              ? [const Color(0xFF101216), const Color(0xFF171B24)]
+              : [const Color(0xFFFFFFFF), const Color(0xFFF6F7FB)],
         ),
       ),
       child: Column(
@@ -740,51 +757,83 @@ class _ConversationScreenState extends State<ConversationScreen> {
           SafeArea(
             bottom: false,
             child: Padding(
-              padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+              padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
               child: Row(
                 children: [
-                  if (!widget.embedded)
-                    IconButton(
-                      onPressed: widget.onBack,
-                      icon: const Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        size: 18,
-                      ),
-                    )
-                  else
-                    const SizedBox(width: 8),
-                  CircleAvatar(
-                    radius: 14,
-                    backgroundColor: isDark
-                        ? const Color(0xFF2B313A)
-                        : const Color(0xFFE7EBF2),
-                    child: Text(
-                      _displayInitials(),
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
-                      ),
+                  IconButton(
+                    onPressed: widget.onBack,
+                    icon: const Icon(
+                      Icons.arrow_back_ios_new_rounded,
+                      size: 22,
+                      color: Color(0xFF1C2146),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Text(_contactName, style: theme.textTheme.titleMedium),
+                  _ConversationAvatar(
+                    avatarUrl: _avatarUrl(),
+                    initials: _displayInitials(),
+                    size: widget.embedded ? 52 : 54,
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          _contactName,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF1A1D45),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        const Text(
+                          'Đang hoạt động',
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Color(0xFF8187A4),
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
                   const Spacer(),
                   Row(
                     children: [
+                      if (widget.embedded)
+                        IconButton(
+                          onPressed: () => _showComingSoon('Tìm kiếm'),
+                          icon: const Icon(
+                            Icons.search_rounded,
+                            color: Color(0xFF171C44),
+                            size: 28,
+                          ),
+                        ),
                       IconButton(
-                        onPressed: () {},
-                        icon: SvgPicture.asset(
-                          'assets/icons/call.svg',
-                          width: 20,
-                          height: 20,
+                        onPressed: () => _showComingSoon('Gọi thoại'),
+                        icon: const Icon(
+                          Icons.call_outlined,
+                          color: Color(0xFF171C44),
+                          size: 28,
                         ),
                       ),
                       IconButton(
-                        onPressed: () {},
-                        icon: SvgPicture.asset(
-                          'assets/icons/video-call.svg',
-                          width: 25,
-                          height: 25,
+                        onPressed: () => _showComingSoon('Gọi video'),
+                        icon: const Icon(
+                          Icons.videocam_outlined,
+                          color: Color(0xFF171C44),
+                          size: 30,
+                        ),
+                      ),
+                      IconButton(
+                        onPressed: () => _showComingSoon('Tuỳ chọn'),
+                        icon: const Icon(
+                          Icons.more_vert_rounded,
+                          color: Color(0xFF171C44),
+                          size: 28,
                         ),
                       ),
                     ],
@@ -794,13 +843,43 @@ class _ConversationScreenState extends State<ConversationScreen> {
             ),
           ),
           Expanded(
-            child: ListView.separated(
+            child: ListView.builder(
               controller: _scrollController,
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 20),
-              itemCount: _messages.length,
-              separatorBuilder: (context, index) => const SizedBox(height: 10),
+              padding: EdgeInsets.fromLTRB(
+                widget.embedded ? 24 : 16,
+                16,
+                widget.embedded ? 24 : 16,
+                16,
+              ),
+              itemCount: _messages.length + 1,
               itemBuilder: (context, index) {
-                final message = _messages[index];
+                if (index == 0) {
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 18),
+                    child: Center(
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 10,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF0EEF9),
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: const Text(
+                          'Hôm nay',
+                          style: TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF6E7291),
+                          ),
+                        ),
+                      ),
+                    ),
+                  );
+                }
+
+                final message = _messages[index - 1];
                 final displayMessage = MessageItem(
                   id: message.id,
                   text: message.text,
@@ -809,22 +888,38 @@ class _ConversationScreenState extends State<ConversationScreen> {
                 );
                 final isSendingMessage =
                     _sending && message.id.startsWith('temp-');
-                return MessageBubble(
-                  message: displayMessage,
-                  isSending: isSendingMessage,
+                return Padding(
+                  padding: const EdgeInsets.only(bottom: 14),
+                  child: MessageBubble(
+                    message: displayMessage,
+                    isSending: isSendingMessage,
+                    peerInitials: _displayInitials(),
+                    peerAvatarUrl: _avatarUrl(),
+                    showSeen:
+                        lastOwnMessage.id.isNotEmpty &&
+                        lastOwnMessage.id == message.id,
+                  ),
                 );
               },
             ),
           ),
           if (_peerTyping)
-            const Padding(
-              padding: EdgeInsets.only(left: 20, right: 20, bottom: 6),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(
-                  'dang go tin nhan...',
-                  style: TextStyle(fontSize: 12, color: Colors.black54),
-                ),
+            Padding(
+              padding: EdgeInsets.only(
+                left: widget.embedded ? 24 : 16,
+                right: 16,
+                bottom: 8,
+              ),
+              child: Row(
+                children: [
+                  _ConversationAvatar(
+                    avatarUrl: _avatarUrl(),
+                    initials: _displayInitials(),
+                    size: 40,
+                  ),
+                  const SizedBox(width: 10),
+                  const TypingIndicator(),
+                ],
               ),
             ),
           InputBar(
@@ -840,6 +935,91 @@ class _ConversationScreenState extends State<ConversationScreen> {
       return content;
     }
 
-    return Scaffold(body: content);
+    return Scaffold(backgroundColor: const Color(0xFFF8F6FF), body: content);
+  }
+}
+
+class _ConversationAvatar extends StatelessWidget {
+  const _ConversationAvatar({
+    required this.avatarUrl,
+    required this.initials,
+    required this.size,
+  });
+
+  final String? avatarUrl;
+  final String initials;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Container(
+          width: size,
+          height: size,
+          clipBehavior: Clip.antiAlias,
+          decoration: const BoxDecoration(
+            shape: BoxShape.circle,
+            color: Color(0xFFE7EAF4),
+          ),
+          child: avatarUrl != null && avatarUrl!.trim().isNotEmpty
+              ? Image.network(
+                  avatarUrl!,
+                  fit: BoxFit.cover,
+                  errorBuilder: (context, error, stackTrace) =>
+                      _ConversationAvatarFallback(
+                        initials: initials,
+                        size: size,
+                      ),
+                )
+              : _ConversationAvatarFallback(initials: initials, size: size),
+        ),
+        const Positioned(
+          right: 2,
+          bottom: 2,
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: Colors.white,
+              shape: BoxShape.circle,
+            ),
+            child: Padding(
+              padding: EdgeInsets.all(2),
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: Color(0xFF5CDD73),
+                  shape: BoxShape.circle,
+                ),
+                child: SizedBox(width: 12, height: 12),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ConversationAvatarFallback extends StatelessWidget {
+  const _ConversationAvatarFallback({
+    required this.initials,
+    required this.size,
+  });
+
+  final String initials;
+  final double size;
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Text(
+        initials,
+        style: TextStyle(
+          fontSize: size * 0.42,
+          fontWeight: FontWeight.w600,
+          color: const Color(0xFF6251CC),
+        ),
+      ),
+    );
   }
 }
