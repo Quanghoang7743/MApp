@@ -40,6 +40,7 @@ class _MessagesShellScreenState extends State<MessagesShellScreen> {
             : 300.0;
 
         return Scaffold(
+          backgroundColor: const Color(0xFFF8F6FF),
           body: SafeArea(
             child: Padding(
               padding: const EdgeInsets.all(12),
@@ -74,7 +75,7 @@ class _MessagesShellScreenState extends State<MessagesShellScreen> {
                           },
                         ),
                       ),
-                      Container(width: 1, color: Colors.black12),
+                      Container(width: 1, color: const Color(0xFFE9EAF1)),
                       Expanded(
                         child: AnimatedSwitcher(
                           duration: const Duration(milliseconds: 180),
@@ -111,20 +112,24 @@ class _ConversationPlaceholder extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      color: const Color(0xFFF7F9FA),
+      color: const Color(0xFFFFFFFF),
       child: const Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             Icon(
               Icons.chat_bubble_outline_rounded,
-              size: 42,
-              color: Colors.black38,
+              size: 46,
+              color: Color(0xFF8B90A8),
             ),
             SizedBox(height: 12),
             Text(
               'Chọn một cuộc trò chuyện',
-              style: TextStyle(fontSize: 18, color: Colors.black54),
+              style: TextStyle(
+                fontSize: 18,
+                color: Color(0xFF60657F),
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ],
         ),

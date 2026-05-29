@@ -6,10 +6,20 @@ class AttachmentsApi {
   final ApiClient _client;
 
   Future<dynamic> addAttachment(
-    String messageId,
-    Map<String, dynamic> payload,
-  ) {
-    return _client.post('/messages/$messageId/attachments', body: payload);
+    String messageId, {
+    required String filePath,
+    String type = 'image',
+  }) {
+    return _client.postMultipart(
+      '/messages/$messageId/attachments',
+      fields: {'type': type},
+      files: [
+        ApiMultipartFile(
+          field: 'file',
+          filePath: filePath,
+        ),
+      ],
+    );
   }
 
   Future<dynamic> deleteAttachment(String attachmentId) {

@@ -78,6 +78,11 @@ class ApiClient {
     );
   }
 
+  Future<dynamic> _handleStreamedResponse(http.StreamedResponse response) async {
+    final materialized = await http.Response.fromStream(response);
+    return _handleResponse(materialized);
+  }
+
   Future<dynamic> get(String path, {Map<String, dynamic>? query}) async {
     final response = await _httpClient.get(
       _uri(path, query),
@@ -93,6 +98,32 @@ class ApiClient {
       body: jsonEncode(body ?? <String, dynamic>{}),
     );
     return _handleResponse(response);
+  }
+
+  Future<dynamic> postMultipart(
+    String path, {
+    Map<String, String>? fields,
+    List<ApiMultipartFile> files = const [],
+  }) async {
+    final request = http.MultipartRequest('POST', _uri(path));
+    request.headers.addAll(await _headers(includeJson: false));
+
+    if (fields != null && fields.isNotEmpty) {
+      request.fields.addAll(fields);
+    }
+
+    for (final file in files) {
+      request.files.add(
+        await http.MultipartFile.fromPath(
+          file.field,
+          file.filePath,
+          filename: file.filename,
+        ),
+      );
+    }
+
+    final response = await _httpClient.send(request);
+    return _handleStreamedResponse(response);
   }
 
   Future<dynamic> put(String path, {Map<String, dynamic>? body}) async {
@@ -123,4 +154,16 @@ class ApiClient {
     final response = await http.Response.fromStream(streamed);
     return _handleResponse(response);
   }
+}
+
+class ApiMultipartFile {
+  const ApiMultipartFile({
+    required this.field,
+    required this.filePath,
+    this.filename,
+  });
+
+  final String field;
+  final String filePath;
+  final String? filename;
 }

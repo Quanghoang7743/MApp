@@ -3,6 +3,7 @@ import 'package:mess_app/Views/app_home_login_screen.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'providers/auth_provider.dart';
+import 'providers/contact_sync_provider.dart';
 import 'providers/friend_provider.dart';
 
 Future<void> main() async {
@@ -16,6 +17,14 @@ Future<void> main() async {
           create: (_) => FriendProvider(),
           update: (_, authProvider, friendProvider) {
             final provider = friendProvider ?? FriendProvider();
+            provider.bindApi(authProvider.api);
+            return provider;
+          },
+        ),
+        ChangeNotifierProxyProvider<AuthProvider, ContactSyncProvider>(
+          create: (_) => ContactSyncProvider(),
+          update: (_, authProvider, contactSyncProvider) {
+            final provider = contactSyncProvider ?? ContactSyncProvider();
             provider.bindApi(authProvider.api);
             return provider;
           },

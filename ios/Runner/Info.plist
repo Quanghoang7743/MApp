@@ -26,6 +26,12 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSContactsUsageDescription</key>
+	<string>MoxChat cần quyền danh bạ để đọc số điện thoại trên máy và gợi ý thêm bạn.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>MoxChat cần quyền Photo để chọn ảnh từ thư viện và gửi trong cuộc trò chuyện.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>MoxChat cần quyền Camera để chụp ảnh và gửi trong cuộc trò chuyện.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
