@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:provider/provider.dart';
 
 import '../models/chat_item.dart';
@@ -10,8 +13,12 @@ import '../services/api_client.dart';
 import '../services/environment.dart';
 import '../services/local/chat_cache_service.dart';
 import '../services/realtime/realtime_service.dart';
+import 'widgets/chat_widgets/conversation_avatar.dart';
+import 'widgets/chat_widgets/conversation_header.dart';
+import 'widgets/chat_widgets/conversation_helpers.dart';
 import 'widgets/chat_widgets/input_bar.dart';
-import 'widgets/chat_widgets/message_bubble.dart';
+import 'widgets/chat_widgets/message_list.dart';
+import 'widgets/chat_widgets/reaction_picker.dart';
 import 'widgets/chat_widgets/typing_indicator.dart';
 
 class ConversationScreen extends StatefulWidget {
@@ -33,14 +40,27 @@ class ConversationScreen extends StatefulWidget {
 }
 
 class _ConversationScreenState extends State<ConversationScreen> {
+  static const List<String> _messageRefreshEvents = [
+    '.message.updated',
+    '.message.reaction.updated',
+    '.message.attachment.created',
+    '.message.attachment.updated',
+    '.message.attachment.deleted',
+  ];
+
   late List<MessageItem> _messages;
   late String _contactName;
   final ScrollController _scrollController = ScrollController();
   final RealtimeService _realtime = RealtimeService.instance;
   final ChatCacheService _cacheService = ChatCacheService();
+  final ImagePicker _imagePicker = ImagePicker();
   bool _sending = false;
   bool _peerTyping = false;
   Timer? _typingHideTimer;
+
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------------
 
   @override
   void initState() {
@@ -53,6 +73,40 @@ class _ConversationScreenState extends State<ConversationScreen> {
     Future.microtask(_setupRealtime);
     WidgetsBinding.instance.addPostFrameCallback((_) => _scrollToBottom());
   }
+
+  @override
+  void dispose() {
+    _typingHideTimer?.cancel();
+    _realtime.unbindConversationEvent(
+      widget.contact.id,
+      '.message.created',
+      _onRealtimeMessageCreated,
+    );
+    _realtime.unbindConversationEvent(
+      widget.contact.id,
+      '.message.deleted_for_everyone',
+      _onRealtimeMessageDeletedForEveryone,
+    );
+    _realtime.unbindConversationEvent(
+      widget.contact.id,
+      '.conversation.typing.updated',
+      _onRealtimeTypingUpdated,
+    );
+    for (final eventName in _messageRefreshEvents) {
+      _realtime.unbindConversationEvent(
+        widget.contact.id,
+        eventName,
+        _onRealtimeMessageMutated,
+      );
+    }
+    _realtime.unsubscribeConversation(widget.contact.id);
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cache & server loading
+  // ---------------------------------------------------------------------------
 
   Future<void> _loadCachedMessages() async {
     if (widget.contact.id.isEmpty) {
@@ -68,6 +122,42 @@ class _ConversationScreenState extends State<ConversationScreen> {
           : _mergeMessages(_messages, cached);
     });
   }
+
+  Future<void> _reloadMessagesFromServer() async {
+    if (widget.contact.id.isEmpty) {
+      return;
+    }
+
+    try {
+      final authProvider = context.read<AuthProvider>();
+      final userId = resolveCurrentUserId(authProvider.user);
+      final response = await authProvider.api.messages.getMessages(
+        widget.contact.id,
+      );
+      final data = extractList(response);
+
+      final mapped = data
+          .whereType<Map<String, dynamic>>()
+          .map((item) => MessageItem.fromJson(item, currentUserId: userId))
+          .toList();
+
+      if (!mounted || mapped.isEmpty) {
+        return;
+      }
+
+      setState(() {
+        _messages = _mergeMessages(_messages, mapped);
+      });
+      await _persistMessages();
+      _scrollToBottom();
+    } catch (_) {
+      // Keep current local messages when reload fails.
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Realtime
+  // ---------------------------------------------------------------------------
 
   Future<void> _setupRealtime() async {
     if (widget.contact.id.isEmpty) {
@@ -105,12 +195,19 @@ class _ConversationScreenState extends State<ConversationScreen> {
       '.conversation.typing.updated',
       _onRealtimeTypingUpdated,
     );
+    for (final eventName in _messageRefreshEvents) {
+      _realtime.bindConversationEvent(
+        widget.contact.id,
+        eventName,
+        _onRealtimeMessageMutated,
+      );
+    }
   }
 
   void _onRealtimeMessageCreated(RealtimeEvent event) {
     final payload = event.data;
-    final conversationId = (payload['conversation_id'] ?? '').toString();
-    if (conversationId != widget.contact.id) {
+    final conversationId = extractConversationId(payload);
+    if (conversationId.isNotEmpty && conversationId != widget.contact.id) {
       return;
     }
 
@@ -120,7 +217,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
     }
 
     final authProvider = context.read<AuthProvider>();
-    final currentUserId = _resolveCurrentUserId(authProvider.user);
+    final currentUserId = resolveCurrentUserId(authProvider.user);
     final normalized = <String, dynamic>{
       ...messageRaw,
       'created_at':
@@ -132,40 +229,63 @@ class _ConversationScreenState extends State<ConversationScreen> {
       normalized,
       currentUserId: currentUserId,
     );
-    if (message.id.isEmpty) {
+    if (message.id.isEmpty || !mounted) {
       return;
     }
 
-    if (!mounted) {
-      return;
-    }
-
-    setState(() {
-      if (message.isMe) {
-        _messages.removeWhere(
+    final shouldSkipSelfPlaceholder =
+        message.isMe &&
+        message.text.trim().isEmpty &&
+        message.attachments.isEmpty &&
+        _messages.any(
           (item) =>
-              item.id.startsWith('temp-') &&
-              item.text.trim() == message.text.trim(),
+              item.isMe &&
+              item.mediaSendState != MediaSendState.sent &&
+              item.localMediaPath != null,
         );
+    if (shouldSkipSelfPlaceholder) {
+      if (looksLikeImageMessage(normalized)) {
+        _refreshMessageById(message.id);
       }
+      return;
+    }
 
-      final existingIndex = _messages.indexWhere(
-        (item) => item.id == message.id,
-      );
-      if (existingIndex >= 0) {
-        _messages[existingIndex] = message;
-      } else {
-        _messages.add(message);
-      }
-      _messages = _sortMessagesByTime(_messages);
-    });
-    _scrollToBottom();
+    _upsertMessage(
+      message,
+      scrollToBottom: true,
+      replaceTemporaryText: message.isMe && message.text.trim().isNotEmpty,
+    );
+
+    if (looksLikeImageMessage(normalized) && message.attachments.isEmpty) {
+      _refreshMessageById(message.id);
+    }
+  }
+
+  void _onRealtimeMessageMutated(RealtimeEvent event) {
+    final payload = event.data;
+    final conversationId = extractConversationId(payload);
+    if (conversationId.isNotEmpty && conversationId != widget.contact.id) {
+      return;
+    }
+
+    final messageRaw = payload['message'];
+    final messageId =
+        (messageRaw is Map<String, dynamic>
+                ? messageRaw['id']
+                : null) ??
+            payload['message_id'] ??
+            payload['id'];
+    final normalizedMessageId = (messageId ?? '').toString();
+    if (normalizedMessageId.isEmpty) {
+      return;
+    }
+    _refreshMessageById(normalizedMessageId);
   }
 
   void _onRealtimeMessageDeletedForEveryone(RealtimeEvent event) {
     final payload = event.data;
-    final conversationId = (payload['conversation_id'] ?? '').toString();
-    if (conversationId != widget.contact.id) {
+    final conversationId = extractConversationId(payload);
+    if (conversationId.isNotEmpty && conversationId != widget.contact.id) {
       return;
     }
 
@@ -180,25 +300,28 @@ class _ConversationScreenState extends State<ConversationScreen> {
         return;
       }
       final current = _messages[index];
-      _messages[index] = MessageItem(
-        id: current.id,
+      _messages[index] = current.copyWith(
         text: 'Tin nhan da duoc xoa',
-        isMe: current.isMe,
-        time: current.time,
+        attachments: const [],
+        reactionSummary: const [],
+        myReactionCode: null,
       );
     });
-    _cacheService.saveMessages(widget.contact.id, _messages);
+    _persistMessages();
   }
 
   void _onRealtimeTypingUpdated(RealtimeEvent event) {
     final payload = event.data;
-    final conversationId = (payload['conversation_id'] ?? '').toString();
-    if (conversationId != widget.contact.id || !mounted) {
+    final conversationId = extractConversationId(payload);
+    if (conversationId.isNotEmpty && conversationId != widget.contact.id) {
+      return;
+    }
+    if (!mounted) {
       return;
     }
 
     final authProvider = context.read<AuthProvider>();
-    final currentUserId = _resolveCurrentUserId(authProvider.user);
+    final currentUserId = resolveCurrentUserId(authProvider.user);
     final senderId =
         (payload['user_id'] ??
                 payload['sender_id'] ??
@@ -231,112 +354,18 @@ class _ConversationScreenState extends State<ConversationScreen> {
     }
   }
 
-  Future<void> _resolveContactNameIfUnknown() async {
-    final current = _contactName.trim().toLowerCase();
-    if (current.isNotEmpty && current != 'unknown') {
-      return;
-    }
-
-    if (widget.contact.id.isEmpty) {
-      return;
-    }
-
-    try {
-      final authProvider = context.read<AuthProvider>();
-      final currentUserId = _resolveCurrentUserId(authProvider.user);
-      final response = await authProvider.api.participants.getParticipants(
-        widget.contact.id,
-      );
-      final participants = _extractList(
-        response,
-      ).whereType<Map<String, dynamic>>().toList();
-
-      String? resolvedName;
-      for (final participant in participants) {
-        final user = participant['user'] is Map<String, dynamic>
-            ? participant['user'] as Map<String, dynamic>
-            : participant;
-        final userId = (user['id'] ?? user['user_id'] ?? '').toString();
-        if (userId.isNotEmpty && userId == currentUserId) {
-          continue;
-        }
-
-        final candidate =
-            (user['name'] ??
-                    user['full_name'] ??
-                    user['fullName'] ??
-                    user['username'] ??
-                    user['phone_number'])
-                ?.toString();
-        if (candidate != null && candidate.trim().isNotEmpty) {
-          resolvedName = candidate;
-          break;
-        }
-      }
-
-      if (resolvedName != null && mounted) {
-        setState(() {
-          _contactName = resolvedName!;
-        });
-      }
-    } catch (_) {
-      // keep fallback name
-    }
-  }
-
-  String _displayInitials() {
-    final name = _contactName.trim();
-    if (name.isEmpty || name.toLowerCase() == 'unknown') {
-      return widget.contact.initials;
-    }
-
-    final parts = name
-        .split(RegExp(r'\s+'))
-        .where((e) => e.isNotEmpty)
-        .toList();
-    if (parts.isEmpty) {
-      return widget.contact.initials;
-    }
-    if (parts.length == 1) {
-      return parts.first.substring(0, 1).toUpperCase();
-    }
-    return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
-        .toUpperCase();
-  }
-
-  @override
-  void dispose() {
-    _typingHideTimer?.cancel();
-    _realtime.unbindConversationEvent(
-      widget.contact.id,
-      '.message.created',
-      _onRealtimeMessageCreated,
-    );
-    _realtime.unbindConversationEvent(
-      widget.contact.id,
-      '.message.deleted_for_everyone',
-      _onRealtimeMessageDeletedForEveryone,
-    );
-    _realtime.unbindConversationEvent(
-      widget.contact.id,
-      '.conversation.typing.updated',
-      _onRealtimeTypingUpdated,
-    );
-    _realtime.unsubscribeConversation(widget.contact.id);
-    _scrollController.dispose();
-    super.dispose();
-  }
+  // ---------------------------------------------------------------------------
+  // Send text message
+  // ---------------------------------------------------------------------------
 
   Future<void> _handleSend(String text) async {
     if (widget.contact.id.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Khong tim thay conversation id')),
-      );
+      _showSnackBar('Khong tim thay conversation id');
       return;
     }
 
     final authProvider = context.read<AuthProvider>();
-    final userId = _resolveCurrentUserId(authProvider.user);
+    final userId = resolveCurrentUserId(authProvider.user);
 
     final optimistic = MessageItem(
       id: 'temp-${DateTime.now().millisecondsSinceEpoch}',
@@ -345,18 +374,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
       time: DateTime.now().toIso8601String(),
     );
 
+    _upsertMessage(optimistic, scrollToBottom: true);
     setState(() {
-      _messages.add(optimistic);
-      _messages = _sortMessagesByTime(_messages);
       _sending = true;
     });
-    await _cacheService.saveMessages(widget.contact.id, _messages);
-    _scrollToBottom();
 
     try {
       final response = await _sendMessageWithFallback(authProvider, text);
-
-      final payload = _extractMessagePayload(response);
+      final payload = extractMessagePayload(response);
       if (payload != null && mounted) {
         var serverMessage = MessageItem.fromJson(
           payload,
@@ -374,48 +399,14 @@ class _ConversationScreenState extends State<ConversationScreen> {
           );
         }
 
-        setState(() {
-          _messages.removeWhere((item) => item.id == optimistic.id);
-          _messages.add(serverMessage);
-          _messages = _sortMessagesByTime(_messages);
-        });
-        await _cacheService.saveMessages(widget.contact.id, _messages);
-        _scrollToBottom();
+        _replaceMessage(optimistic.id, serverMessage, scrollToBottom: true);
       }
     } on ApiException catch (e) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _messages.removeWhere((item) => item.id == optimistic.id);
-        _messages = _sortMessagesByTime(_messages);
-      });
-      await _cacheService.saveMessages(widget.contact.id, _messages);
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Gui tin nhan that bai: ${_readableApiError(e)}'),
-        ),
-      );
+      _removeMessageById(optimistic.id);
+      _showSnackBar('Gui tin nhan that bai: ${readableApiError(e)}');
     } catch (e) {
-      if (!mounted) {
-        return;
-      }
-
-      setState(() {
-        _messages.removeWhere((item) => item.id == optimistic.id);
-        _messages = _sortMessagesByTime(_messages);
-      });
-      await _cacheService.saveMessages(widget.contact.id, _messages);
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Gui tin nhan that bai: $e')));
+      _removeMessageById(optimistic.id);
+      _showSnackBar('Gui tin nhan that bai: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -482,115 +473,539 @@ class _ConversationScreenState extends State<ConversationScreen> {
         );
   }
 
-  String _readableApiError(ApiException error) {
-    final data = error.data;
+  // ---------------------------------------------------------------------------
+  // Send image message
+  // ---------------------------------------------------------------------------
 
-    if (data is Map<String, dynamic>) {
-      final errors = data['errors'];
-      if (errors is Map<String, dynamic> && errors.isNotEmpty) {
-        final first = errors.entries.first;
-        final value = first.value;
-        if (value is List && value.isNotEmpty) {
-          return '${first.key}: ${value.first}';
+  Future<void> _handlePickPhoto() async {
+    if (!await _ensurePhotoPermission()) {
+      return;
+    }
+    await _pickAndSendImage(ImageSource.gallery);
+  }
+
+  Future<void> _handleOpenCamera() async {
+    if (!await _ensureCameraPermission()) {
+      return;
+    }
+    await _pickAndSendImage(ImageSource.camera);
+  }
+
+  Future<void> _pickAndSendImage(ImageSource source) async {
+    try {
+      final file = await _imagePicker.pickImage(source: source);
+      if (!mounted || file == null || file.path.trim().isEmpty) {
+        return;
+      }
+      await _sendImageMessage(file.path);
+    } catch (e) {
+      if (!mounted) {
+        return;
+      }
+      _showSnackBar('Khong the mo anh: $e');
+    }
+  }
+
+  Future<void> _sendImageMessage(
+    String localPath, {
+    String? existingMessageId,
+  }) async {
+    if (widget.contact.id.isEmpty) {
+      _showSnackBar('Khong tim thay conversation id');
+      return;
+    }
+
+    final authProvider = context.read<AuthProvider>();
+    final userId = resolveCurrentUserId(authProvider.user);
+    final localMessageId =
+        existingMessageId ?? 'temp-media-${DateTime.now().millisecondsSinceEpoch}';
+
+    final optimisticMessage = MessageItem(
+      id: localMessageId,
+      text: '',
+      isMe: true,
+      time: DateTime.now().toIso8601String(),
+      attachments: [
+        MessageAttachmentItem(
+          id: 'local-$localMessageId',
+          url: '',
+          mimeType: guessImageMimeType(localPath),
+          localPath: localPath,
+        ),
+      ],
+      mediaSendState: MediaSendState.sending,
+    );
+
+    _upsertMessage(optimisticMessage, scrollToBottom: true);
+
+    String serverMessageId = existingMessageId ?? '';
+    try {
+      if (serverMessageId.isEmpty || serverMessageId.startsWith('temp-')) {
+        final createdResponse = await authProvider.api.messages.sendMessage(
+          widget.contact.id,
+          {'content': '', 'type': 'image'},
+        );
+        final createdPayload = extractMessagePayload(createdResponse);
+        serverMessageId =
+            (createdPayload?['id'] ?? extractMessageId(createdResponse))
+                .toString();
+        if (serverMessageId.isEmpty) {
+          throw Exception('Khong nhan duoc message id cho anh');
         }
-        return '${first.key}: $value';
+
+        final createdMessage = MessageItem(
+          id: serverMessageId,
+          text: '',
+          isMe: true,
+          time:
+              (createdPayload?['created_at'] ??
+                      createdPayload?['createdAt'] ??
+                      createdPayload?['time'] ??
+                      optimisticMessage.time)
+                  .toString(),
+          attachments: optimisticMessage.attachments,
+          mediaSendState: MediaSendState.sending,
+        );
+        _replaceMessage(localMessageId, createdMessage, scrollToBottom: true);
       }
 
-      final message = data['message'];
-      if (message is String && message.trim().isNotEmpty) {
-        return message;
+      final currentPendingMessage = _messageById(serverMessageId) ?? optimisticMessage;
+      final uploadResponse = await authProvider.api.attachments.addAttachment(
+        serverMessageId,
+        filePath: localPath,
+      );
+      final resolvedMessage = await _resolveServerMessageAfterUpload(
+        authProvider: authProvider,
+        userId: userId,
+        messageId: serverMessageId,
+        uploadResponse: uploadResponse,
+        fallbackMessage: currentPendingMessage.copyWith(
+          id: serverMessageId,
+          mediaSendState: MediaSendState.sent,
+        ),
+      );
+
+      _upsertMessage(
+        resolvedMessage.copyWith(mediaSendState: MediaSendState.sent),
+        scrollToBottom: true,
+      );
+    } on ApiException catch (e) {
+      _markMessageUploadFailed(
+        messageId: serverMessageId.isNotEmpty ? serverMessageId : localMessageId,
+      );
+      _showSnackBar('Gui anh that bai: ${readableApiError(e)}');
+    } catch (e) {
+      _markMessageUploadFailed(
+        messageId: serverMessageId.isNotEmpty ? serverMessageId : localMessageId,
+      );
+      _showSnackBar('Gui anh that bai: $e');
+    }
+  }
+
+  Future<void> _retryMediaMessage(MessageItem message) async {
+    final localPath = message.localMediaPath;
+    if (localPath == null || localPath.trim().isEmpty) {
+      _showSnackBar('Khong tim thay anh de thu lai');
+      return;
+    }
+
+    _upsertMessage(
+      message.copyWith(mediaSendState: MediaSendState.sending),
+      scrollToBottom: false,
+    );
+    await _sendImageMessage(localPath, existingMessageId: message.id);
+  }
+
+  Future<void> _removeLocalMediaMessage(MessageItem message) async {
+    _removeMessageById(message.id);
+  }
+
+  Future<MessageItem> _resolveServerMessageAfterUpload({
+    required AuthProvider authProvider,
+    required String userId,
+    required String messageId,
+    required dynamic uploadResponse,
+    required MessageItem fallbackMessage,
+  }) async {
+    final uploadPayload = extractMessagePayload(uploadResponse);
+    if (uploadPayload != null) {
+      final parsed = MessageItem.fromJson(uploadPayload, currentUserId: userId);
+      if (parsed.id == messageId && parsed.attachments.isNotEmpty) {
+        return parsed;
       }
     }
 
-    return error.message;
-  }
-
-  Map<String, dynamic>? _extractMessagePayload(dynamic response) {
-    if (response is Map<String, dynamic>) {
-      final data = response['data'];
-      if (data is Map<String, dynamic>) {
-        return data;
-      }
-      final message = response['message'];
-      if (message is Map<String, dynamic>) {
-        return message;
-      }
-      return response;
+    final refreshed = await _refreshMessageById(messageId);
+    if (refreshed != null && refreshed.attachments.isNotEmpty) {
+      return refreshed;
     }
-    return null;
+
+    return fallbackMessage;
   }
 
-  Future<void> _reloadMessagesFromServer() async {
+  // ---------------------------------------------------------------------------
+  // Reactions
+  // ---------------------------------------------------------------------------
+
+  Future<void> _showReactionPicker(MessageItem message, Offset position) async {
+    if (message.id.isEmpty || message.id.startsWith('temp-')) {
+      return;
+    }
+
+    final selectedReaction = await showGeneralDialog<String>(
+      context: context,
+      barrierDismissible: true,
+      barrierLabel: 'Reaction picker',
+      barrierColor: Colors.black.withValues(alpha: 0.08),
+      transitionDuration: const Duration(milliseconds: 140),
+      pageBuilder: (dialogContext, animation, secondaryAnimation) {
+        final screenSize = MediaQuery.of(dialogContext).size;
+        const pickerWidth = 300.0;
+        const pickerHeight = 72.0;
+        final left = (position.dx - (pickerWidth / 2)).clamp(
+          12.0,
+          screenSize.width - pickerWidth - 12,
+        );
+        final top = (position.dy - pickerHeight - 18).clamp(
+          24.0,
+          screenSize.height - pickerHeight - 24,
+        );
+
+        return Material(
+          color: Colors.transparent,
+          child: Stack(
+            children: [
+              Positioned.fill(
+                child: GestureDetector(
+                  onTap: () => Navigator.of(dialogContext).pop(),
+                  child: const SizedBox.expand(),
+                ),
+              ),
+              Positioned(
+                left: left,
+                top: top,
+                child: ReactionPickerCard(
+                  options: reactionOptions,
+                  selectedCode: message.myReactionCode,
+                ),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (!mounted || selectedReaction == null) {
+      return;
+    }
+
+    await _toggleReaction(message, selectedReaction);
+  }
+
+  Future<void> _toggleReaction(
+    MessageItem originalMessage,
+    String selectedCode,
+  ) async {
+    final authProvider = context.read<AuthProvider>();
+    final currentCode = originalMessage.myReactionCode;
+    final nextCode = currentCode == selectedCode ? null : selectedCode;
+
+    _upsertMessage(_applyOptimisticReaction(originalMessage, nextCode));
+
+    try {
+      if (currentCode != null && currentCode.isNotEmpty) {
+        await authProvider.api.reactions.deleteReaction(
+          originalMessage.id,
+          payload: {'reaction_code': currentCode},
+        );
+      }
+
+      if (nextCode != null) {
+        await authProvider.api.reactions.addReaction(
+          originalMessage.id,
+          {'reaction_code': nextCode},
+        );
+      }
+
+      await _refreshMessageById(originalMessage.id);
+      await _refreshMessageReactions(
+        originalMessage.id,
+        fallbackMyReactionCode: nextCode,
+      );
+    } on ApiException catch (e) {
+      _upsertMessage(originalMessage);
+      _showSnackBar('Khong the cap nhat cam xuc: ${readableApiError(e)}');
+    } catch (e) {
+      _upsertMessage(originalMessage);
+      _showSnackBar('Khong the cap nhat cam xuc: $e');
+    }
+  }
+
+  MessageItem _applyOptimisticReaction(
+    MessageItem message,
+    String? nextReactionCode,
+  ) {
+    final counts = <String, MessageReactionSummary>{};
+    for (final item in message.reactionSummary) {
+      counts[item.reactionCode] = item;
+    }
+
+    final currentCode = message.myReactionCode;
+    if (currentCode != null && counts.containsKey(currentCode)) {
+      final current = counts[currentCode]!;
+      final nextCount = current.count - 1;
+      if (nextCount <= 0) {
+        counts.remove(currentCode);
+      } else {
+        counts[currentCode] = MessageReactionSummary(
+          reactionCode: current.reactionCode,
+          count: nextCount,
+          reactedByMe: false,
+        );
+      }
+    }
+
+    if (nextReactionCode != null) {
+      final existing = counts[nextReactionCode];
+      counts[nextReactionCode] = MessageReactionSummary(
+        reactionCode: nextReactionCode,
+        count: (existing?.count ?? 0) + 1,
+        reactedByMe: true,
+      );
+    }
+
+    final updatedSummary = counts.values.toList(growable: false)
+      ..sort((a, b) {
+        final orderCompare =
+            reactionOrderIndex(a.reactionCode).compareTo(
+              reactionOrderIndex(b.reactionCode),
+            );
+        if (orderCompare != 0) {
+          return orderCompare;
+        }
+        return a.reactionCode.compareTo(b.reactionCode);
+      });
+
+    return message.copyWith(
+      reactionSummary: updatedSummary,
+      myReactionCode: nextReactionCode,
+    );
+  }
+
+  Future<void> _refreshMessageReactions(
+    String messageId, {
+    String? fallbackMyReactionCode,
+  }) async {
+    try {
+      final authProvider = context.read<AuthProvider>();
+      final currentUserId = resolveCurrentUserId(authProvider.user);
+      final response = await authProvider.api.reactions.getReactions(messageId);
+      final reactionSource = extractReactionSource(response);
+      final summaries = MessageReactionSummary.parseList(
+        reactionSource,
+        currentUserId: currentUserId,
+      );
+      final currentMessage = _messageById(messageId);
+      if (currentMessage == null) {
+        return;
+      }
+
+      final myReactionCode =
+          MessageReactionSummary.resolveMyReactionCode(summaries) ??
+          fallbackMyReactionCode;
+      _upsertMessage(
+        currentMessage.copyWith(
+          reactionSummary: summaries,
+          myReactionCode: myReactionCode,
+        ),
+      );
+    } catch (_) {
+      // Keep optimistic reaction state if explicit refresh fails.
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Permissions
+  // ---------------------------------------------------------------------------
+
+  Future<bool> _ensurePhotoPermission() async {
+    if (!Platform.isIOS) {
+      return true;
+    }
+    return _requestPermission(
+      Permission.photos,
+      deniedMessage: 'Mess App cần quyền Photo để chọn ảnh gửi trong chat.',
+    );
+  }
+
+  Future<bool> _ensureCameraPermission() {
+    return _requestPermission(
+      Permission.camera,
+      deniedMessage: 'Mess App cần quyền Camera để chụp ảnh gửi trong chat.',
+    );
+  }
+
+  Future<bool> _requestPermission(
+    Permission permission, {
+    required String deniedMessage,
+  }) async {
+    var status = await permission.status;
+    if (status.isGranted || status.isLimited) {
+      return true;
+    }
+
+    if (status.isDenied) {
+      status = await permission.request();
+      if (status.isGranted || status.isLimited) {
+        return true;
+      }
+    }
+
+    _showPermissionSnackBar(deniedMessage);
+    return false;
+  }
+
+  void _showPermissionSnackBar(String message) {
+    if (!mounted) {
+      return;
+    }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        action: SnackBarAction(
+          label: 'Cài đặt',
+          onPressed: openAppSettings,
+        ),
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Contact name resolution
+  // ---------------------------------------------------------------------------
+
+  Future<void> _resolveContactNameIfUnknown() async {
+    final current = _contactName.trim().toLowerCase();
+    if (current.isNotEmpty && current != 'unknown') {
+      return;
+    }
+
     if (widget.contact.id.isEmpty) {
       return;
     }
 
     try {
       final authProvider = context.read<AuthProvider>();
-      final userId = _resolveCurrentUserId(authProvider.user);
-      final response = await authProvider.api.messages.getMessages(
+      final currentUserId = resolveCurrentUserId(authProvider.user);
+      final response = await authProvider.api.participants.getParticipants(
         widget.contact.id,
       );
-      final data = _extractList(response);
+      final participants = extractList(
+        response,
+      ).whereType<Map<String, dynamic>>().toList();
 
-      final mapped = data
-          .whereType<Map<String, dynamic>>()
-          .map((item) => MessageItem.fromJson(item, currentUserId: userId))
-          .toList();
+      String? resolvedName;
+      for (final participant in participants) {
+        final user = participant['user'] is Map<String, dynamic>
+            ? participant['user'] as Map<String, dynamic>
+            : participant;
+        final userId = (user['id'] ?? user['user_id'] ?? '').toString();
+        if (userId.isNotEmpty && userId == currentUserId) {
+          continue;
+        }
 
-      if (!mounted || mapped.isEmpty) {
-        return;
+        final candidate =
+            (user['name'] ??
+                    user['full_name'] ??
+                    user['fullName'] ??
+                    user['username'] ??
+                    user['phone_number'])
+                ?.toString();
+        if (candidate != null && candidate.trim().isNotEmpty) {
+          resolvedName = candidate;
+          break;
+        }
       }
 
-      setState(() {
-        final currentById = <String, MessageItem>{
-          for (final item in _messages)
-            if (item.id.isNotEmpty) item.id: item,
-        };
-
-        for (final serverItem in mapped) {
-          if (serverItem.id.isEmpty) {
-            continue;
-          }
-
-          final existing = currentById[serverItem.id];
-          if (existing != null &&
-              existing.text.trim().isNotEmpty &&
-              serverItem.text.trim().isEmpty) {
-            continue;
-          }
-          currentById[serverItem.id] = serverItem;
-        }
-
-        final merged = <MessageItem>[];
-        final seenIds = <String>{};
-
-        for (final local in _messages) {
-          if (local.id.isEmpty) {
-            merged.add(local);
-            continue;
-          }
-
-          final resolved = currentById[local.id] ?? local;
-          merged.add(resolved);
-          seenIds.add(local.id);
-        }
-
-        for (final serverItem in mapped) {
-          if (serverItem.id.isEmpty || seenIds.contains(serverItem.id)) {
-            continue;
-          }
-          merged.add(serverItem);
-        }
-
-        _messages = _mergeMessages(_messages, mapped);
-      });
-      await _cacheService.saveMessages(widget.contact.id, _messages);
-      _scrollToBottom();
+      if (resolvedName != null && mounted) {
+        setState(() {
+          _contactName = resolvedName!;
+        });
+      }
     } catch (_) {
-      // Keep current local messages when reload fails.
+      // Keep fallback name.
     }
   }
+
+  String _displayInitials() {
+    final name = _contactName.trim();
+    if (name.isEmpty || name.toLowerCase() == 'unknown') {
+      return widget.contact.initials;
+    }
+
+    final parts = name
+        .split(RegExp(r'\s+'))
+        .where((e) => e.isNotEmpty)
+        .toList();
+    if (parts.isEmpty) {
+      return widget.contact.initials;
+    }
+    if (parts.length == 1) {
+      return parts.first.substring(0, 1).toUpperCase();
+    }
+    return '${parts.first.substring(0, 1)}${parts.last.substring(0, 1)}'
+        .toUpperCase();
+  }
+
+  String? _avatarUrl() {
+    final avatar = widget.contact.avatarUrl;
+    if (avatar != null && avatar.trim().isNotEmpty) {
+      return avatar;
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Message refresh
+  // ---------------------------------------------------------------------------
+
+  Future<MessageItem?> _refreshMessageById(String messageId) async {
+    if (messageId.isEmpty) {
+      return null;
+    }
+
+    try {
+      final authProvider = context.read<AuthProvider>();
+      final userId = resolveCurrentUserId(authProvider.user);
+      final response = await authProvider.api.messages.getMessageById(messageId);
+      final payload = extractMessagePayload(response);
+      if (payload == null) {
+        return null;
+      }
+
+      var refreshed = MessageItem.fromJson(payload, currentUserId: userId);
+      final existing = _messageById(messageId);
+      if (existing != null && refreshed.attachments.isEmpty) {
+        refreshed = refreshed.copyWith(attachments: existing.attachments);
+      }
+      if (existing != null && refreshed.reactionSummary.isEmpty) {
+        refreshed = refreshed.copyWith(
+          reactionSummary: existing.reactionSummary,
+          myReactionCode: refreshed.myReactionCode ?? existing.myReactionCode,
+        );
+      }
+
+      _upsertMessage(refreshed);
+      return refreshed;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Message list management
+  // ---------------------------------------------------------------------------
 
   List<MessageItem> _sortMessagesByTime(List<MessageItem> messages) {
     final list = List<MessageItem>.from(messages);
@@ -617,11 +1032,11 @@ class _ConversationScreenState extends State<ConversationScreen> {
     List<MessageItem> incoming,
   ) {
     final byId = <String, MessageItem>{};
-    final tempMessages = <MessageItem>[];
+    final localOnlyMessages = <MessageItem>[];
 
     for (final item in current) {
       if (item.id.startsWith('temp-')) {
-        tempMessages.add(item);
+        localOnlyMessages.add(item);
       } else if (item.id.isNotEmpty) {
         byId[item.id] = item;
       }
@@ -629,11 +1044,24 @@ class _ConversationScreenState extends State<ConversationScreen> {
 
     for (final item in incoming) {
       if (item.id.isNotEmpty) {
-        byId[item.id] = item;
+        final existing = byId[item.id];
+        if (existing != null &&
+            item.attachments.isEmpty &&
+            existing.attachments.isNotEmpty) {
+          byId[item.id] = item.copyWith(
+            attachments: existing.attachments,
+            reactionSummary: item.reactionSummary.isEmpty
+                ? existing.reactionSummary
+                : item.reactionSummary,
+            myReactionCode: item.myReactionCode ?? existing.myReactionCode,
+          );
+        } else {
+          byId[item.id] = item;
+        }
       }
     }
 
-    return _sortMessagesByTime([...byId.values, ...tempMessages]);
+    return _sortMessagesByTime([...byId.values, ...localOnlyMessages]);
   }
 
   void _scrollToBottom() {
@@ -653,86 +1081,121 @@ class _ConversationScreenState extends State<ConversationScreen> {
     });
   }
 
-  List<dynamic> _extractList(dynamic response) {
-    if (response is List) {
-      return response;
+  MessageItem? _messageById(String messageId) {
+    try {
+      return _messages.firstWhere((item) => item.id == messageId);
+    } catch (_) {
+      return null;
     }
-
-    if (response is Map<String, dynamic>) {
-      final data = response['data'];
-      if (data is List) {
-        return data;
-      }
-      if (data is Map<String, dynamic>) {
-        final nested = data['data'];
-        if (nested is List) {
-          return nested;
-        }
-      }
-    }
-
-    return const [];
   }
 
-  String _resolveCurrentUserId(Map<String, dynamic>? user) {
-    if (user == null) {
-      return '';
-    }
-
-    final direct = user['id'] ?? user['user_id'];
-    if (direct != null && direct.toString().isNotEmpty) {
-      return direct.toString();
-    }
-
-    final nestedUser = user['user'];
-    if (nestedUser is Map<String, dynamic>) {
-      final nestedId = nestedUser['id'] ?? nestedUser['user_id'];
-      if (nestedId != null && nestedId.toString().isNotEmpty) {
-        return nestedId.toString();
-      }
-    }
-
-    final data = user['data'];
-    if (data is Map<String, dynamic>) {
-      final dataId = data['id'] ?? data['user_id'];
-      if (dataId != null && dataId.toString().isNotEmpty) {
-        return dataId.toString();
-      }
-    }
-
-    return '';
+  Future<void> _persistMessages() async {
+    await _cacheService.saveMessages(widget.contact.id, _messages);
   }
 
-  String _formatTime(String raw) {
-    final parsed = DateTime.tryParse(raw);
-    if (parsed != null) {
-      final local = parsed.toLocal();
-      final hh = local.hour.toString().padLeft(2, '0');
-      final mm = local.minute.toString().padLeft(2, '0');
-      return '$hh:$mm';
+  void _upsertMessage(
+    MessageItem message, {
+    bool scrollToBottom = false,
+    bool replaceTemporaryText = false,
+  }) {
+    if (!mounted) {
+      return;
     }
 
-    final match = RegExp(r'(\d{2}):(\d{2})').firstMatch(raw);
-    if (match != null) {
-      return '${match.group(1)}:${match.group(2)}';
-    }
+    setState(() {
+      final next = List<MessageItem>.from(_messages);
+      if (replaceTemporaryText) {
+        next.removeWhere(
+          (item) =>
+              item.id.startsWith('temp-') &&
+              item.text.trim().isNotEmpty &&
+              item.text.trim() == message.text.trim(),
+        );
+      }
 
-    return raw;
+      final index = next.indexWhere((item) => item.id == message.id);
+      if (index >= 0) {
+        next[index] = message;
+      } else {
+        next.add(message);
+      }
+      _messages = _sortMessagesByTime(next);
+    });
+
+    _persistMessages();
+    if (scrollToBottom) {
+      _scrollToBottom();
+    }
   }
 
-  String? _avatarUrl() {
-    final avatar = widget.contact.avatarUrl;
-    if (avatar != null && avatar.trim().isNotEmpty) {
-      return avatar;
+  void _replaceMessage(
+    String oldMessageId,
+    MessageItem replacement, {
+    bool scrollToBottom = false,
+  }) {
+    if (!mounted) {
+      return;
     }
-    return null;
+
+    setState(() {
+      final next = List<MessageItem>.from(_messages)
+        ..removeWhere((item) => item.id == oldMessageId);
+      final existingIndex = next.indexWhere((item) => item.id == replacement.id);
+      if (existingIndex >= 0) {
+        next[existingIndex] = replacement;
+      } else {
+        next.add(replacement);
+      }
+      _messages = _sortMessagesByTime(next);
+    });
+
+    _persistMessages();
+    if (scrollToBottom) {
+      _scrollToBottom();
+    }
+  }
+
+  void _removeMessageById(String messageId) {
+    if (!mounted) {
+      return;
+    }
+
+    setState(() {
+      _messages = _sortMessagesByTime(
+        _messages.where((item) => item.id != messageId).toList(),
+      );
+    });
+    _persistMessages();
+  }
+
+  void _markMessageUploadFailed({required String messageId}) {
+    final message = _messageById(messageId);
+    if (message == null) {
+      return;
+    }
+    _upsertMessage(message.copyWith(mediaSendState: MediaSendState.failed));
+  }
+
+  // ---------------------------------------------------------------------------
+  // UI helpers
+  // ---------------------------------------------------------------------------
+
+  void _showSnackBar(String message) {
+    if (!mounted) {
+      return;
+    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
+    );
   }
 
   void _showComingSoon(String label) {
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('$label đang được phát triển')));
+    _showSnackBar('$label đang được phát triển');
   }
+
+  // ---------------------------------------------------------------------------
+  // Build
+  // ---------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -754,153 +1217,26 @@ class _ConversationScreenState extends State<ConversationScreen> {
       ),
       child: Column(
         children: [
-          SafeArea(
-            bottom: false,
-            child: Padding(
-              padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
-              child: Row(
-                children: [
-                  IconButton(
-                    onPressed: widget.onBack,
-                    icon: const Icon(
-                      Icons.arrow_back_ios_new_rounded,
-                      size: 22,
-                      color: Color(0xFF1C2146),
-                    ),
-                  ),
-                  _ConversationAvatar(
-                    avatarUrl: _avatarUrl(),
-                    initials: _displayInitials(),
-                    size: widget.embedded ? 52 : 54,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _contactName,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF1A1D45),
-                          ),
-                        ),
-                        const SizedBox(height: 2),
-                        const Text(
-                          'Đang hoạt động',
-                          style: TextStyle(
-                            fontSize: 14,
-                            color: Color(0xFF8187A4),
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const Spacer(),
-                  Row(
-                    children: [
-                      if (widget.embedded)
-                        IconButton(
-                          onPressed: () => _showComingSoon('Tìm kiếm'),
-                          icon: const Icon(
-                            Icons.search_rounded,
-                            color: Color(0xFF171C44),
-                            size: 28,
-                          ),
-                        ),
-                      IconButton(
-                        onPressed: () => _showComingSoon('Gọi thoại'),
-                        icon: const Icon(
-                          Icons.call_outlined,
-                          color: Color(0xFF171C44),
-                          size: 28,
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => _showComingSoon('Gọi video'),
-                        icon: const Icon(
-                          Icons.videocam_outlined,
-                          color: Color(0xFF171C44),
-                          size: 30,
-                        ),
-                      ),
-                      IconButton(
-                        onPressed: () => _showComingSoon('Tuỳ chọn'),
-                        icon: const Icon(
-                          Icons.more_vert_rounded,
-                          color: Color(0xFF171C44),
-                          size: 28,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+          ConversationHeader(
+            contactName: _contactName,
+            avatarUrl: _avatarUrl(),
+            initials: _displayInitials(),
+            embedded: widget.embedded,
+            onBack: widget.onBack,
+            onAction: _showComingSoon,
           ),
           Expanded(
-            child: ListView.builder(
-              controller: _scrollController,
-              padding: EdgeInsets.fromLTRB(
-                widget.embedded ? 24 : 16,
-                16,
-                widget.embedded ? 24 : 16,
-                16,
-              ),
-              itemCount: _messages.length + 1,
-              itemBuilder: (context, index) {
-                if (index == 0) {
-                  return Padding(
-                    padding: const EdgeInsets.only(bottom: 18),
-                    child: Center(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 20,
-                          vertical: 10,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xFFF0EEF9),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Text(
-                          'Hôm nay',
-                          style: TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF6E7291),
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                }
-
-                final message = _messages[index - 1];
-                final displayMessage = MessageItem(
-                  id: message.id,
-                  text: message.text,
-                  isMe: message.isMe,
-                  time: _formatTime(message.time),
-                );
-                final isSendingMessage =
-                    _sending && message.id.startsWith('temp-');
-                return Padding(
-                  padding: const EdgeInsets.only(bottom: 14),
-                  child: MessageBubble(
-                    message: displayMessage,
-                    isSending: isSendingMessage,
-                    peerInitials: _displayInitials(),
-                    peerAvatarUrl: _avatarUrl(),
-                    showSeen:
-                        lastOwnMessage.id.isNotEmpty &&
-                        lastOwnMessage.id == message.id,
-                  ),
-                );
-              },
+            child: MessageList(
+              messages: _messages,
+              scrollController: _scrollController,
+              embedded: widget.embedded,
+              sending: _sending,
+              lastOwnMessageId: lastOwnMessage.id,
+              peerInitials: _displayInitials(),
+              peerAvatarUrl: _avatarUrl(),
+              onLongPressMessage: _showReactionPicker,
+              onRetryMedia: _retryMediaMessage,
+              onRemoveMedia: _removeLocalMediaMessage,
             ),
           ),
           if (_peerTyping)
@@ -912,7 +1248,7 @@ class _ConversationScreenState extends State<ConversationScreen> {
               ),
               child: Row(
                 children: [
-                  _ConversationAvatar(
+                  ConversationAvatar(
                     avatarUrl: _avatarUrl(),
                     initials: _displayInitials(),
                     size: 40,
@@ -926,6 +1262,8 @@ class _ConversationScreenState extends State<ConversationScreen> {
             isDark: isDark,
             conversationId: widget.contact.id,
             onSend: _handleSend,
+            onPickPhoto: _handlePickPhoto,
+            onOpenCamera: _handleOpenCamera,
           ),
         ],
       ),
@@ -936,90 +1274,5 @@ class _ConversationScreenState extends State<ConversationScreen> {
     }
 
     return Scaffold(backgroundColor: const Color(0xFFF8F6FF), body: content);
-  }
-}
-
-class _ConversationAvatar extends StatelessWidget {
-  const _ConversationAvatar({
-    required this.avatarUrl,
-    required this.initials,
-    required this.size,
-  });
-
-  final String? avatarUrl;
-  final String initials;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Container(
-          width: size,
-          height: size,
-          clipBehavior: Clip.antiAlias,
-          decoration: const BoxDecoration(
-            shape: BoxShape.circle,
-            color: Color(0xFFE7EAF4),
-          ),
-          child: avatarUrl != null && avatarUrl!.trim().isNotEmpty
-              ? Image.network(
-                  avatarUrl!,
-                  fit: BoxFit.cover,
-                  errorBuilder: (context, error, stackTrace) =>
-                      _ConversationAvatarFallback(
-                        initials: initials,
-                        size: size,
-                      ),
-                )
-              : _ConversationAvatarFallback(initials: initials, size: size),
-        ),
-        const Positioned(
-          right: 2,
-          bottom: 2,
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: Colors.white,
-              shape: BoxShape.circle,
-            ),
-            child: Padding(
-              padding: EdgeInsets.all(2),
-              child: DecoratedBox(
-                decoration: BoxDecoration(
-                  color: Color(0xFF5CDD73),
-                  shape: BoxShape.circle,
-                ),
-                child: SizedBox(width: 12, height: 12),
-              ),
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-}
-
-class _ConversationAvatarFallback extends StatelessWidget {
-  const _ConversationAvatarFallback({
-    required this.initials,
-    required this.size,
-  });
-
-  final String initials;
-  final double size;
-
-  @override
-  Widget build(BuildContext context) {
-    return Center(
-      child: Text(
-        initials,
-        style: TextStyle(
-          fontSize: size * 0.42,
-          fontWeight: FontWeight.w600,
-          color: const Color(0xFF6251CC),
-        ),
-      ),
-    );
   }
 }

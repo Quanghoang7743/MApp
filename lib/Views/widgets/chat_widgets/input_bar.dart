@@ -11,11 +11,15 @@ class InputBar extends StatefulWidget {
     required this.isDark,
     required this.conversationId,
     required this.onSend,
+    required this.onPickPhoto,
+    required this.onOpenCamera,
   });
 
   final bool isDark;
   final String conversationId;
   final ValueChanged<String> onSend;
+  final Future<void> Function() onPickPhoto;
+  final Future<void> Function() onOpenCamera;
 
   @override
   State<InputBar> createState() => _InputBarState();
@@ -59,6 +63,14 @@ class _InputBarState extends State<InputBar> {
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text('$label đang được phát triển')));
+  }
+
+  void _showReactionHint() {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('Nhấn giữ tin nhắn để thả cảm xúc'),
+      ),
+    );
   }
 
   @override
@@ -143,15 +155,19 @@ class _InputBarState extends State<InputBar> {
                       ),
                       _InlineIconButton(
                         icon: Icons.sentiment_satisfied_alt_rounded,
-                        onTap: () => _showComingSoon('Biểu cảm'),
+                        onTap: _showReactionHint,
                       ),
                       _InlineIconButton(
                         icon: Icons.attach_file_rounded,
-                        onTap: () => _showComingSoon('Đính kèm'),
+                        onTap: () {
+                          widget.onPickPhoto();
+                        },
                       ),
                       _InlineIconButton(
                         icon: Icons.photo_camera_outlined,
-                        onTap: () => _showComingSoon('Máy ảnh'),
+                        onTap: () {
+                          widget.onOpenCamera();
+                        },
                       ),
                     ],
                   ),

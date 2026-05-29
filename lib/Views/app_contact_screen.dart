@@ -707,24 +707,24 @@ class _ContactScreenState extends State<ContactScreen> {
               const SizedBox(height: 22),
               Row(
                 children: [
-                  Expanded(
-                    child: _ActionCard(
-                      title: _contactsActionTitle(contactSyncProvider),
-                      subtitle: _contactsActionSubtitle(contactSyncProvider),
-                      iconBackground: const Color(0xFFE9DDFF),
-                      icon: SvgPicture.asset(
-                        'assets/icons/add-user.svg',
-                        width: 20,
-                        height: 20,
-                        colorFilter: const ColorFilter.mode(
-                          Color(0xFF6E4CFF),
-                          BlendMode.srcIn,
-                        ),
-                      ),
-                      onTap: () =>
-                          _handleContactsActionTap(contactSyncProvider),
-                    ),
-                  ),
+                  // Expanded(
+                  //   child: _ActionCard(
+                  //     title: _contactsActionTitle(contactSyncProvider),
+                  //     subtitle: _contactsActionSubtitle(contactSyncProvider),
+                  //     iconBackground: const Color(0xFFE9DDFF),
+                  //     icon: SvgPicture.asset(
+                  //       'assets/icons/add-user.svg',
+                  //       width: 20,
+                  //       height: 20,
+                  //       colorFilter: const ColorFilter.mode(
+                  //         Color(0xFF6E4CFF),
+                  //         BlendMode.srcIn,
+                  //       ),
+                  //     ),
+                  //     onTap: () =>
+                  //         _handleContactsActionTap(contactSyncProvider),
+                  //   ),
+                  // ),
                   const SizedBox(width: 14),
                   Expanded(
                     child: _ActionCard(

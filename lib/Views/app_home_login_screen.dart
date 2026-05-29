@@ -34,47 +34,49 @@ class _HomeLoginScreen extends State<HomeLoginScreen> {
                     Column(
                       
                       children: [
-                        // Nút Đăng nhập với Gradient
-                        DecoratedBox(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(18),
-                            gradient: const LinearGradient(
-                              begin: Alignment.centerLeft,
-                              end: Alignment.centerRight,
-                              colors: [Color(0xFF3D6BFF), Color(0xFF7D37F5)],
-                            ),
-                            boxShadow: const [
-                              BoxShadow(
-                                color: Color(0x2B643FF4),
-                                blurRadius: 18,
-                                offset: Offset(0, 8),
+                        SizedBox(
+                          width: double.infinity,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(18),
+                              gradient: const LinearGradient(
+                                begin: Alignment.centerLeft,
+                                end: Alignment.centerRight,
+                                colors: [Color(0xFF3D6BFF), Color(0xFF7D37F5)],
                               ),
-                            ],
-                          ),
-                          child: ElevatedButton(
-                            onPressed: () {
-                              Navigator.push(
-                                context,
-                                MaterialPageRoute(
-                                  builder: (context) => const LoginScreen(),
+                              boxShadow: const [
+                                BoxShadow(
+                                  color: Color(0x2B643FF4),
+                                  blurRadius: 18,
+                                  offset: Offset(0, 8),
                                 ),
-                              );
-                            },
-                            style: ElevatedButton.styleFrom(
-                              elevation: 0,
-                              shadowColor: Colors.transparent,
-                              backgroundColor: Colors.transparent,
-                              disabledBackgroundColor: Colors.transparent,
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(18),
-                              ),
-                              padding: const EdgeInsets.symmetric(vertical: 19),
+                              ],
                             ),
-                            child: const Text(
-                              "Đăng nhập",
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: FontWeight.bold,
+                            child: ElevatedButton(
+                              onPressed: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => const LoginScreen(),
+                                  ),
+                                );
+                              },
+                              style: ElevatedButton.styleFrom(
+                                elevation: 0,
+                                shadowColor: Colors.transparent,
+                                backgroundColor: Colors.transparent,
+                                disabledBackgroundColor: Colors.transparent,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(18),
+                                ),
+                                padding: const EdgeInsets.symmetric(vertical: 19),
+                              ),
+                              child: const Text(
+                                "Đăng nhập",
+                                style: TextStyle(
+                                  color: Colors.white,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
                             ),
                           ),

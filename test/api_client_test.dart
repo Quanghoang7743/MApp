@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -100,6 +101,44 @@ void main() {
               .having((e) => e.message, 'message', 'Unauthorized request'),
         ),
       );
+    });
+
+    test('POST multipart request success', () async {
+      final tempDir = await Directory.systemTemp.createTemp('mess-app-test');
+      final tempFile = File('${tempDir.path}/photo.jpg');
+      await tempFile.writeAsBytes([1, 2, 3, 4]);
+
+      final mockClient = MockClient((request) async {
+        expect(request.method, 'POST');
+        expect(request.url.path, '/api/messages/m-1/attachments');
+        expect(request.headers['authorization'], 'Bearer my_secret_token');
+        expect(
+          request.headers['content-type'],
+          contains('multipart/form-data'),
+        );
+
+        expect(request.body, contains('name="type"'));
+        expect(request.body, contains('image'));
+        expect(request.body, contains('name="file"; filename="photo.jpg"'));
+
+        return http.Response(jsonEncode({'uploaded': true}), 201);
+      });
+
+      final apiClient = ApiClient(
+        httpClient: mockClient,
+        tokenProvider: () async => 'my_secret_token',
+      );
+
+      final response = await apiClient.postMultipart(
+        '/messages/m-1/attachments',
+        fields: {'type': 'image'},
+        files: [
+          ApiMultipartFile(field: 'file', filePath: tempFile.path),
+        ],
+      );
+
+      expect(response['uploaded'], true);
+      await tempDir.delete(recursive: true);
     });
   });
 }
