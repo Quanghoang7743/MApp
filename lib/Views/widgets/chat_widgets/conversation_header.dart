@@ -18,9 +18,6 @@ class ConversationHeader extends StatelessWidget {
   final String initials;
   final bool embedded;
   final VoidCallback onBack;
-
-  /// Called when an action button is tapped. Receives a label string
-  /// (e.g. 'Tìm kiếm', 'Gọi thoại', 'Gọi video', 'Tuỳ chọn').
   final void Function(String label) onAction;
 
   @override
